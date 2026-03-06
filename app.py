@@ -843,7 +843,7 @@ for fname in [
 # ─── LAYOUT ───────────────────────────────────
 MARGEN_IZQ     = 20
 MARGEN_SUP     = 60
-ESPACIO_X      = 100
+ESPACIO_X      = 140
 ESPACIO_Y      = 115
 COLUMNAS       = 2
 FILAS          = 4
@@ -864,15 +864,16 @@ SERIE_MAP = {
     "Srs_Manila.xlsx":"M"
 }
 
+# ── OFFSETS EN CÓDIGO (boleto 0…7) ──
 per_cell_offsets = {
-    0: {"grid_x": -100, "grid_y": 20,  "info_x": 5,   "info_y": 25,  "rein_x": 225, "rein_y": 30},
-    1: {"grid_x": -155, "grid_y": 20,  "info_x": -60, "info_y": 25,  "rein_x": 170, "rein_y": 30},
-    2: {"grid_x": -100, "grid_y": 75,  "info_x": 5,   "info_y": 80,  "rein_x": 225, "rein_y": -25},
-    3: {"grid_x": -155, "grid_y": 75,  "info_x": -60, "info_y": 80,  "rein_x": 170, "rein_y": -25},
-    4: {"grid_x": -100, "grid_y": 133, "info_x": 5,   "info_y": 143, "rein_x": 225, "rein_y": -85},
-    5: {"grid_x": -155, "grid_y": 133, "info_x": -60, "info_y": 143, "rein_x": 170, "rein_y": -85},
-    6: {"grid_x": -100, "grid_y": 195, "info_x": 5,   "info_y": 200, "rein_x": 225, "rein_y": -145},
-    7: {"grid_x": -155, "grid_y": 195, "info_x": -60, "info_y": 200, "rein_x": 170, "rein_y": -145},
+    0: {"grid_x": -85, "grid_y": 20,  "info_x": 5,   "info_y": 20,  "rein_x": 215, "rein_y": 30},
+    1: {"grid_x": -162, "grid_y":20,  "info_x": -70, "info_y": 20,  "rein_x": 140, "rein_y": 30},
+    2: {"grid_x": -85, "grid_y": 85,  "info_x": 5,   "info_y": 82,  "rein_x": 215, "rein_y": -25},
+    3: {"grid_x": -162, "grid_y":85,  "info_x": -70, "info_y": 82,  "rein_x": 140, "rein_y": -25},
+    4: {"grid_x": -85, "grid_y": 143, "info_x": 5,   "info_y": 132, "rein_x": 215, "rein_y": -85},
+    5: {"grid_x": -162, "grid_y":143, "info_x": -70, "info_y": 132, "rein_x": 140, "rein_y": -85},
+    6: {"grid_x": -85, "grid_y": 205, "info_x": 5,   "info_y": 192, "rein_x": 215, "rein_y": -145},
+    7: {"grid_x": -162, "grid_y":205, "info_x": -70, "info_y": 192, "rein_x": 140, "rein_y": -145},
 }
 
 # ================== LOGS XML ==================
