@@ -1697,7 +1697,7 @@ def _try_draw_qr_on_canvas(c, data, x, y, size):
         if total <= 0:
             return False
 
-        module = max(1.0, float(size) / float(total))
+        module = float(size) / float(total)
         qr_size = module * total
         ox = x + (size - qr_size) / 2.0
         oy = y + (size - qr_size) / 2.0
@@ -1844,10 +1844,13 @@ def generar_pdf_boletos_excel(
                                 )
                         except Exception:
                             pass
-                        _try_draw_qr_on_canvas(c, qr_data, cx + 1, cy + 1, size - 0)
+                        qr_target = (size - 4) * 1.20
+                        qr_x = cx + (size - qr_target) / 2.0
+                        qr_y = cy + (size - qr_target) / 2.0
+                        _try_draw_qr_on_canvas(c, qr_data, qr_x, qr_y, qr_target)
                     else:
                         v = str(row.get(f"{letra}{r+1}", "-"))
-                        c.drawCentredString(cx + size / 2, cy + size * 0.22, v)
+                        c.drawCentredString(cx + size / 2, cy + size * 0.28, v)
 
             # Texto inferior: ID grande + fecha + valor
             boleto_text = f"{ids[pos]}{SERIE_MAP.get(nombre, nombre)}"
@@ -4151,6 +4154,18 @@ def series_impresas_en_fecha(fecha_iso):
             s.add(serie)
     return sorted(s)
 
+
+def fechas_impresas_disponibles():
+    _, r = _imp_root()
+    fechas = set()
+    for n in r.findall('impresion'):
+        if (n.get('tipo') or '').lower() != 'boletos':
+            continue
+        f = (n.findtext('fecha_sorteo') or '').strip()
+        if f:
+            fechas.add(f)
+    return sorted(fechas)
+
 def total_boletos_impresos_por_serie_fecha(serie_archivo, fecha_iso):
     """Suma lógicamente todos los 'total_boletos' para esa serie y fecha."""
     _, r = _imp_root()
@@ -4447,7 +4462,11 @@ def asignar_planillas():
         'asignar_planillas.html',
         vendedores=vendedores,
         fecha_hoy=fecha_hoy,
-        fechas_disponibles=sorted([d.attrib['fecha'] for d in root.findall('dia')] + [fecha_hoy]),
+        fechas_disponibles=sorted(set(
+            [d.attrib['fecha'] for d in root.findall('dia')]
+            + fechas_impresas_disponibles()
+            + [fecha_hoy, fecha_seleccionada]
+        )),
         fecha_seleccionada=fecha_seleccionada,
         series_impresas=series_dia,           # ← para el combo de serie
         serie_seleccionada=serie_param,
@@ -7865,22 +7884,84 @@ def _fmt_int(x):
         return "0"
 
 def code_for(name: str) -> str:
-    n = (name or "").strip().upper()
-    # Prioridad: tablas llenas numeradas
+    """
+    Genera un código ESTABLE y sin colisiones para las figuras.
+
+    Importante:
+    - Conserva TL1..TL4 para la lógica histórica.
+    - Conserva códigos semánticos legacy para LLENA / RELLENA / COMPLETA.
+    - Normaliza variantes del usuario como "LLENA 1" / "LLENA 2"
+      a sus semánticas reales: LLENA / RELLENA.
+    - Evita choques reales como:
+        MINI K  -> MINIK
+        MINI Y  -> MINIY
+        NUMERO 4 -> NUM04
+        NUMERO 12 -> NUM12
+      que antes colisionaban por usar solo los primeros 4 caracteres.
+    """
+    raw = "" if name is None else str(name)
+    n = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    n = re.sub(r"\s+", " ", n).strip().upper()
+
+    # Prioridad: tablas llenas numeradas / programadas
     if n.startswith("TABLA LLENA 1"): return "TL1"
     if n.startswith("TABLA LLENA 2"): return "TL2"
     if n.startswith("TABLA LLENA 3"): return "TL3"
     if n.startswith("TABLA LLENA 4"): return "TL4"
 
-    # Evita colisiones comunes (p.ej. "TABLA LLENA" y "TABLA RELLENA" antes daban "TABL")
+    # Variantes semánticas usadas por el usuario en figuras del día.
+    # Ojo: esto NO significa "tabla programada"; solo normaliza el nombre.
+    if re.fullmatch(r"LLENA\s*1", n): return "LLEN"
+    if re.fullmatch(r"LLENA\s*2", n): return "RELL"
+    if re.fullmatch(r"LLENA\s*3", n): return "YAPA"
+    if re.fullmatch(r"LLENA\s*4", n): return "COMP"
+
+    # Compatibilidad semántica legacy
     if "RELLENA" in n:
         return "RELL"
     if ("TABLA LLENA" in n) or (n == "LLENA") or n.endswith(" LLENA"):
         return "LLEN"
     if "COMPLETA" in n or "COMPLETO" in n:
         return "COMP"
+    if n == "YAPA":
+        return "YAPA"
 
-    return re.sub(r"[^A-Z0-9]", "", n)[:4] or "FIG"
+    # Casos comunes con número explícito
+    m_num = re.match(r"^(?:NUMERO|N)\s*(\d{1,2})$", n)
+    if m_num:
+        try:
+            return f"NUM{int(m_num.group(1)):02d}"
+        except Exception:
+            pass
+
+    # Código legible y suficientemente largo para no chocar entre figuras parecidas
+    base = re.sub(r"[^A-Z0-9]", "", n)
+    if not base:
+        return "FIG"
+
+    # Nombres cortos quedan casi idénticos al nombre real
+    if len(base) <= 8:
+        return base
+
+    # Nombres largos: prefijo + hash corto estable
+    import zlib
+    crc = zlib.crc32(base.encode("utf-8")) % 10000
+    return f"{base[:8]}{crc:04d}"
+
+def _tl_semantic_name(nombre: str, code: str = "") -> str:
+    """Convierte códigos/nombres internos a nombres semánticos visibles."""
+    raw = str(nombre or "").strip()
+    c = str(code or code_for(raw)).strip().upper()
+    return {
+        "TL1": "LLENA",
+        "TL2": "RELLENA",
+        "TL3": "YAPA",
+        "TL4": "SUPER YAPA",
+        "LLEN": "LLENA",
+        "RELL": "RELLENA",
+        "YAPA": "YAPA",
+        "COMP": "COMPLETA",
+    }.get(c, raw)
 
 def _san4(v: str) -> str:
     """Normaliza string a 4 dígitos (0-9). Vacío => ''."""
@@ -8226,13 +8307,7 @@ XML_FIG_PANEL_REL  = "xml_figuras_panel.xml"
 VMIX_ESTADOS_BASE  = (os.getenv("VMIX_ESTADOS_BASE") or r"E:\MEDIA\ESTADOS").strip() or r"E:\MEDIA\ESTADOS"
 
 def _panel_name_display(nombre: str) -> str:
-    code = code_for(str(nombre or ""))
-    return {
-        "TL1": "LLENA",
-        "TL2": "RELLENA",
-        "TL3": "YAPA",
-        "TL4": "SUPER YAPA",
-    }.get(code, str(nombre or "").strip())
+    return _tl_semantic_name(str(nombre or ""), code_for(str(nombre or "")))
 
 def _panel_state_norm(estado: str) -> str:
     s = re.sub(r"\s+", " ", str(estado or "INACTIVO").strip().upper())
@@ -10911,6 +10986,9 @@ DB_DIR = DB_DIR_PERSIST
 # Archivos core
 BINGO_XML     = os.path.join(DB_DIR, "datos_bingo.xml")
 HIST_JSON     = os.path.join(DB_DIR, "historial.json")
+VMIX_NUMEROS_XML = os.path.join(DB_DIR, "vmix_numeros.xml")
+VMIX_NUMEROS_MEDIA_DIR = os.getenv("VMIX_NUMEROS_MEDIA_DIR", r"E:\MEDIA\NUMEROS")
+VMIX_NUMEROS_INACTIVA_FILE = os.getenv("VMIX_NUMEROS_INACTIVA_FILE", "INACTIVA")
 
 # Spinners (VMIX overlay + fallback XML)
 VMIX_SPINNERS_XML = globals().get("VMIX_SPINNERS_XML", os.path.join(DB_DIR, "vmix_spinners.xml"))
@@ -12223,7 +12301,7 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
             continue
 
         code = globals().get("code_for")(nombre_src) if callable(globals().get("code_for")) else re.sub(r"[^A-Z0-9]", "", nombre_src.upper())[:4] or "FIG"
-        nombre = _TL_DISPLAY_NAME.get(code, nombre_src)
+        nombre = _tl_semantic_name(nombre_src, code)
         required_pos, cmap = _required_positions_for_fig(code, catalogo)
 
         if not required_pos and not (code in ("TL1", "TL2", "TL3", "TL4")):
@@ -12251,7 +12329,11 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
             _valor_tl = float(str((sorteo_cfg or {}).get(f"tl{_slot}") or "0").replace(",", "."))
         except Exception:
             _valor_tl = 0.0
-        _debe_jugar = (_valor_tl > 0.0) or (_slot <= int(tl_prog_slots or 0))
+        # IMPORTANTE:
+        #   El valor tl1/tl2/tl3/tl4 solo define el PREMIO configurado.
+        #   NO debe inyectar una "tabla programada" por sí solo.
+        #   Solo jugamos TL1..TL4 cuando realmente están programadas/activas.
+        _debe_jugar = (_slot <= int(tl_prog_slots or 0))
         if not _debe_jugar:
             continue
         _req_tl, _cmap_tl = _required_positions_for_fig(_code, catalogo)
@@ -12314,6 +12396,13 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
         if _TL_NORMAL_CODE.get(_slot)
     }
     if _normal_codes_bloqueados:
+        # Si existe una TL programada activa, la versión semántica normal
+        # (LLENA / RELLENA / YAPA / COMPLETA) NO debe jugar ese mismo día,
+        # porque el premio lo debe resolver únicamente la programada.
+        patrones = [
+            p for p in (patrones or [])
+            if p.get("code") not in _normal_codes_bloqueados
+        ]
         non_tl_fig_keys = {
             p.get("fig_key") for p in (patrones or [])
             if p.get("fig_key")
@@ -12618,6 +12707,63 @@ def _ensure_bingo_xml():
     ET.SubElement(root, "stinger").text = ""
     ET.ElementTree(root).write(BINGO_XML, encoding="utf-8", xml_declaration=True)
 
+def _vmix_num_path(filename: str) -> str:
+    base = str(VMIX_NUMEROS_MEDIA_DIR or "").strip().rstrip("\\/")
+    if not base:
+        return filename
+    return os.path.join(base, filename)
+
+def _ensure_vmix_numeros_xml():
+    if os.path.exists(VMIX_NUMEROS_XML):
+        return
+    try:
+        _sync_vmix_numeros_xml_from_stack(_read_stack())
+    except Exception:
+        pass
+
+def _sync_vmix_numeros_xml_from_stack(stack):
+    """
+    XML paralelo para vMix con rutas directas a PNG:
+      - si el número está marcado: ruta_actual = E:\\MEDIA\\NUMEROS\\N.png
+      - si no está marcado:       ruta_actual = E:\\MEDIA\\NUMEROS\\INACTIVA.png
+    No toca datos_bingo.xml; es un espejo exclusivo para overlays/imágenes.
+    """
+    marked = set(int(x) for x in (stack or []) if 1 <= int(x) <= 75)
+    last = (stack or [])[-1] if stack else None
+    ult5 = list(reversed((stack or [])[-5:])) if stack else []
+
+    inactive_name = f"{VMIX_NUMEROS_INACTIVA_FILE}.png"
+    inactive_path = _vmix_num_path(inactive_name)
+
+    root = ET.Element("numeros")
+    meta = ET.SubElement(root, "meta")
+    ET.SubElement(meta, "directorio").text = str(VMIX_NUMEROS_MEDIA_DIR or "")
+    ET.SubElement(meta, "inactiva").text = inactive_path
+    ET.SubElement(meta, "ultimoMarcado").text = (str(last) if last is not None else "")
+    ET.SubElement(meta, "ultimos5").text = ",".join(str(x) for x in ult5)
+    ET.SubElement(meta, "totalMarcadas").text = str(len(marked))
+
+    items = ET.SubElement(root, "items")
+    for n in range(1, 76):
+        active = n in marked
+        active_path = _vmix_num_path(f"{n}.png")
+        current_path = active_path if active else inactive_path
+        ET.SubElement(
+            items,
+            "numero",
+            id=str(n),
+            valor=str(n),
+            archivo=f"{n}.png",
+            activo=("1" if active else "0"),
+            estado=("ACTIVO" if active else "INACTIVO"),
+            ultimo=("1" if last == n else "0"),
+            ruta_activa=active_path,
+            ruta_inactiva=inactive_path,
+            ruta_actual=current_path,
+        )
+
+    _write_game_xml_dual(ET.ElementTree(root), "vmix_numeros.xml")
+
 def _sync_bingo_xml_from_stack(stack):
     """
     Reglas pedidas (como tu captura):
@@ -12657,6 +12803,10 @@ def _sync_bingo_xml_from_stack(stack):
     root.find("ultimoMarcado").text = (str(last) if last is not None else "")
 
     tree.write(BINGO_XML, encoding="utf-8", xml_declaration=True)
+    try:
+        _sync_vmix_numeros_xml_from_stack(stack)
+    except Exception:
+        pass
 
 def _to_iso_date(s: str) -> str:
     s = (s or "").strip()
@@ -13256,6 +13406,11 @@ def juego_xml_bingo():
     _ensure_bingo_xml()
     return _no_cache_file(BINGO_XML)
 
+@juego_bp.get("/xml/numeros")
+def juego_xml_numeros():
+    _ensure_vmix_numeros_xml()
+    return _no_cache_file(VMIX_NUMEROS_XML)
+
 @juego_bp.get("/xml/spinners")
 def juego_xml_spinners():
     _ensure_vmix_xml()
@@ -13592,6 +13747,7 @@ def juego_vmix_panel():
             "titulo": "Juego",
             "items": [
                 {"nombre": "Bingo XML", "tipo": "xml", "url": f"{base}/juego/xml/bingo", "ruta": "/juego/xml/bingo", "nota": "Tablero de balotas para Data Source.", "disponible": True},
+                {"nombre": "Números PNG XML", "tipo": "xml", "url": f"{base}/juego/xml/numeros", "ruta": "/juego/xml/numeros", "nota": "Rutas de imágenes PNG por número para vMix.", "disponible": True},
                 {"nombre": "Spinners XML", "tipo": "xml", "url": f"{base}/juego/xml/spinners", "ruta": "/juego/xml/spinners", "nota": "Spinners activos para overlays.", "disponible": True},
                 {"nombre": "Ganadores XML", "tipo": "xml", "url": f"{base}/juego/ganadores.xml", "ruta": "/juego/ganadores.xml", "nota": "Listado de premios ganadores.", "disponible": True},
                 {"nombre": "Cartón ganador (tabla DS)", "tipo": "xml", "url": f"{base}/juego/xml/carton_ganador", "ruta": "/juego/xml/carton_ganador", "nota": "Tabla única para vMix Data Source.", "disponible": True},
@@ -13639,6 +13795,7 @@ def juego_vmix_links_json():
         "base_url": base,
         "links": {
             "bingo": f"{base}/juego/xml/bingo",
+            "numeros_png": f"{base}/juego/xml/numeros",
             "spinners": f"{base}/juego/xml/spinners",
             "ganadores": f"{base}/juego/ganadores.xml",
             "carton_ganador": f"{base}/juego/xml/carton_ganador",
@@ -14312,6 +14469,142 @@ def juego_figuras_sync_xml():
     return jsonify(ok=True, fecha=fecha, origen_xml=path_xml, figuras=figs)
 
 # ============================================================
+#  vMix XML extra: TOTAL A JUGAR + ESTADO DE FIGURAS
+# ============================================================
+VMIX_TOTAL_JUGAR_REL = "vmix_total_jugar.xml"
+VMIX_FIGURAS_ESTADO_REL = "vmix_figuras_estado.xml"
+
+
+def _vmix_money_fmt(v):
+    try:
+        return f"${_fmt_int(v)}"
+    except Exception:
+        try:
+            return f"${int(float(str(v).replace(',', '.')))}"
+        except Exception:
+            return "$0"
+
+
+def _vmix_total_jugar_root(fecha: str | None = None):
+    fecha = str(fecha or _get_sorteo_fecha() or date.today().isoformat()).strip()
+    cfg = _sorteo_read_config(fecha) or {}
+    activo = _get_sorteo_activo_info() or {}
+
+    valor = _fmt_int(cfg.get('total_a_jugar') or 0)
+    premios = _fmt_int(cfg.get('total_premios') or 0)
+    boletos = _fmt_int(cfg.get('boletos_impresos') or 0)
+    valor_boleto = _fmt_int(cfg.get('valor_boleto') or 0)
+    nombre_sorteo = (cfg.get('nombre_sorteo') or activo.get('nombre_sorteo') or f'Sorteo {fecha}').strip()
+    identificador = (cfg.get('identificador') or activo.get('identificador') or '').strip()
+
+    root = ET.Element('total_jugar', {
+        'fecha': fecha,
+        'sorteo': nombre_sorteo,
+        'identificador': identificador,
+        'orden': 'filas',
+    })
+    fila = ET.SubElement(root, 'fila')
+    ET.SubElement(fila, 'fecha').text = fecha
+    ET.SubElement(fila, 'sorteo').text = nombre_sorteo
+    ET.SubElement(fila, 'identificador').text = identificador
+    ET.SubElement(fila, 'concepto').text = 'TOTAL A JUGAR'
+    ET.SubElement(fila, 'valor').text = valor
+    ET.SubElement(fila, 'valor_fmt').text = _vmix_money_fmt(valor)
+    ET.SubElement(fila, 'total_premios').text = premios
+    ET.SubElement(fila, 'total_premios_fmt').text = _vmix_money_fmt(premios)
+    ET.SubElement(fila, 'boletos_impresos').text = boletos
+    ET.SubElement(fila, 'valor_boleto').text = valor_boleto
+    ET.SubElement(fila, 'valor_boleto_fmt').text = _vmix_money_fmt(valor_boleto)
+    return root
+
+
+def _winner_name_for_vmix(g: dict) -> str:
+    nombre = str((g or {}).get('nombre') or '').strip()
+    if nombre:
+        return nombre
+    boleto = str((g or {}).get('boleto') or '').strip()
+    if boleto:
+        return f'BOLETO #{boleto}'
+    vendedor = str((g or {}).get('vendedor') or '').strip()
+    if vendedor:
+        return vendedor
+    sector = str((g or {}).get('sector') or '').strip()
+    if sector:
+        return sector
+    return '-'
+
+
+def _vmix_figuras_estado_root(fecha: str | None = None):
+    fecha = str(fecha or _get_sorteo_fecha() or date.today().isoformat()).strip()
+    resultados = _cargar_resultados(fecha) or {'items': []}
+    items = list(resultados.get('items') or [])
+
+    root = ET.Element('figuras_estado', {
+        'fecha': fecha,
+        'total': str(len(items)),
+        'orden': 'filas',
+    })
+
+    for idx, item in enumerate(items, start=1):
+        nombre_raw = str(item.get('figura') or item.get('nombre') or '').strip()
+        if not nombre_raw:
+            continue
+        figura = _panel_name_display(nombre_raw)
+        ganadores = list(item.get('ganadores') or [])
+        ganador_nombres = []
+        for g in ganadores:
+            nom = _winner_name_for_vmix(g)
+            if nom != '-':
+                ganador_nombres.append(nom)
+        ganador_txt = ' / '.join(ganador_nombres) if ganador_nombres else '-'
+        jugada = '1' if ganadores else '0'
+        estado = 'JUGADA' if ganadores else 'PENDIENTE'
+        texto = f'{figura} -' if not ganadores else f'{figura} {ganador_txt}'
+        premio = '0'
+        try:
+            if ganadores:
+                premio = _fmt_int(ganadores[0].get('premio') or 0)
+        except Exception:
+            premio = '0'
+
+        fila = ET.SubElement(root, 'fila')
+        ET.SubElement(fila, 'orden').text = str(idx)
+        ET.SubElement(fila, 'figura').text = figura
+        ET.SubElement(fila, 'figura_raw').text = nombre_raw
+        ET.SubElement(fila, 'estado').text = estado
+        ET.SubElement(fila, 'jugada').text = jugada
+        ET.SubElement(fila, 'ganador').text = ganador_txt
+        ET.SubElement(fila, 'texto').text = texto
+        ET.SubElement(fila, 'cantidad_ganadores').text = str(len(ganadores))
+        ET.SubElement(fila, 'premio').text = premio
+        ET.SubElement(fila, 'premio_fmt').text = _vmix_money_fmt(premio)
+
+    return root
+
+
+@juego_bp.get('/xml/total_jugar')
+def juego_xml_total_jugar():
+    fecha = (request.args.get('fecha') or _get_sorteo_fecha()).strip()
+    root = _vmix_total_jugar_root(fecha)
+    try:
+        _write_xml_both(ET.ElementTree(root), VMIX_TOTAL_JUGAR_REL)
+    except Exception:
+        pass
+    return _vmix_xml_response(root)
+
+
+@juego_bp.get('/xml/figuras_estado')
+def juego_xml_figuras_estado():
+    fecha = (request.args.get('fecha') or _get_sorteo_fecha()).strip()
+    root = _vmix_figuras_estado_root(fecha)
+    try:
+        _write_xml_both(ET.ElementTree(root), VMIX_FIGURAS_ESTADO_REL)
+    except Exception:
+        pass
+    return _vmix_xml_response(root)
+
+
+# ============================================================
 #  REGISTRO BP + INICIALIZACIÓN
 # ============================================================
 def register_juego(app):
@@ -14927,10 +15220,13 @@ def _guardar_figuras_para_fecha_hotfix():
     return redirect(url_for("escoger_figuras"))
 
 try:
+    if "escoger_figuras_guardar" in app.view_functions:
+        app.view_functions["escoger_figuras_guardar"] = _guardar_figuras_para_fecha_hotfix
+    # Compatibilidad extra por si en otra versión el endpoint cambió de nombre
     if "guardar_figuras_para_fecha" in app.view_functions:
         app.view_functions["guardar_figuras_para_fecha"] = _guardar_figuras_para_fecha_hotfix
 except Exception as e:
-    print("[GLBINGO HOTFIX] No se pudo parchear guardar_figuras_para_fecha:", e)
+    print("[GLBINGO HOTFIX] No se pudo parchear escoger_figuras_guardar:", e)
 
 # 4) imprime rutas en consola al iniciar
 try:
@@ -15252,34 +15548,131 @@ def _juego_series_en_juego(fecha):
             pass
     return out
 
-def _juego_ticket_info(fecha, serie_archivo, carton_id):
-    df = _read_df_for_series(serie_archivo)
-    if df is None or getattr(df, "empty", True):
-        return None, "No se pudo leer la serie"
+def _ticket_en_rangos_impresos(fecha_iso, serie_archivo, carton_id) -> bool:
+    """Valida que el boleto pertenezca realmente a los rangos impresos de ESA fecha."""
+    cid = str(carton_id or "").strip()
+    if not cid:
+        return False
     try:
-        idcol = str(df.columns[0])
+        cid_num = int(re.sub(r"\D", "", cid) or 0)
     except Exception:
-        return None, "Serie inválida"
+        cid_num = None
+
+    for rg in (_get_rangos_en_juego(str(fecha_iso)) or []):
+        s = str((rg or {}).get("serie_archivo") or "").strip()
+        if s and serie_archivo and not _serie_equal(s, serie_archivo):
+            continue
+        try:
+            a = int(re.sub(r"\D", "", str((rg or {}).get("desde") or "")) or 0)
+            b = int(re.sub(r"\D", "", str((rg or {}).get("hasta") or "")) or 0)
+        except Exception:
+            continue
+        if cid_num is not None and a <= cid_num <= b:
+            return True
+    return False
+
+def _rangos_merge_para_serie(fecha_iso, serie_archivo, total_ids):
+    rangos = []
+    for rg in (_get_rangos_en_juego(str(fecha_iso)) or []):
+        s = str((rg or {}).get("serie_archivo") or "").strip()
+        if s and serie_archivo and not _serie_equal(s, serie_archivo):
+            continue
+        try:
+            a = int((rg or {}).get("desde") or 0)
+            b = int((rg or {}).get("hasta") or 0)
+        except Exception:
+            continue
+        if a <= 0 or b <= 0:
+            continue
+        # índices 0-based, fin exclusivo
+        s0 = max(0, min(total_ids, a - 1))
+        e0 = max(0, min(total_ids, b))
+        if e0 <= s0:
+            continue
+        rangos.append((s0, e0))
+
+    if not rangos:
+        return []
+
+    rangos.sort(key=lambda x: (x[0], x[1]))
+    merged = []
+    cs, ce = rangos[0]
+    for s0, e0 in rangos[1:]:
+        if s0 <= ce:
+            ce = max(ce, e0)
+        else:
+            merged.append((cs, ce))
+            cs, ce = s0, e0
+    merged.append((cs, ce))
+    return merged
+
+def _juego_ticket_info(fecha, serie_archivo, carton_id):
     cid = str(carton_id).strip()
     if not cid:
         return None, "Cartón vacío"
+
+    # MUY IMPORTANTE: solo permitimos consultar/corregir boletos impresos para esa fecha.
+    if not _ticket_en_rangos_impresos(str(fecha), str(serie_archivo), cid):
+        return None, "Ese boleto no pertenece a los boletos impresos de esa fecha"
+
     try:
-        m = df[df[idcol].astype(str).str.strip() == cid]
+        df, idcol, ids, id_to_idx, mtime = _get_series_meta_cached(serie_archivo)
     except Exception:
-        m = None
-    if m is None or m.empty:
+        df = _read_df_for_series(serie_archivo)
+        if df is None or getattr(df, "empty", True):
+            return None, "No se pudo leer la serie"
         try:
-            n = int(re.sub(r"\D", "", cid) or 0)
-            m = df[pd.to_numeric(df[idcol], errors="coerce").fillna(-1).astype(int) == n]
+            idcol = str(df.columns[0])
         except Exception:
-            pass
-    if m is None or m.empty:
-        return None, "Boleto no encontrado en la serie"
-    row = m.iloc[0]
-    row_lower = {str(c).strip().lower(): row[c] for c in df.columns}
-    grid, pos_map = _build_grid_from_row(row_lower)
-    corr = _corr_get(fecha, serie_archivo, cid)
-    grid, pos_map = _corr_apply_to_grid(grid, pos_map, corr)
+            return None, "Serie inválida"
+        ids = df[idcol].astype(str).tolist()
+        mtime = 0.0
+
+    merged = _rangos_merge_para_serie(str(fecha), str(serie_archivo), len(ids))
+    if not merged:
+        return None, "No hay boletos impresos para esa fecha/serie"
+
+    found = None
+    try:
+        tickets, _ = _get_cartones_index_cached(str(fecha), str(serie_archivo), merged, df, idcol, mtime)
+        for t in (tickets or []):
+            tid = str(t.get("carton_id", "")).strip()
+            if tid == cid:
+                found = t
+                break
+            try:
+                if int(re.sub(r"\D", "", tid) or 0) == int(re.sub(r"\D", "", cid) or 0):
+                    found = t
+                    break
+            except Exception:
+                pass
+    except Exception:
+        found = None
+
+    if found is not None:
+        grid = _copy_mod.deepcopy(found.get("grid") or []) if _copy_mod else [list(r) for r in (found.get("grid") or [])]
+        pos_map = dict(found.get("pos_map") or {})
+        corr = _corr_get(fecha, serie_archivo, cid)
+        grid, pos_map = _corr_apply_to_grid(grid, pos_map, corr)
+    else:
+        # fallback ultra-seguro
+        try:
+            m = df[df[idcol].astype(str).str.strip() == cid]
+        except Exception:
+            m = None
+        if m is None or m.empty:
+            try:
+                n = int(re.sub(r"\D", "", cid) or 0)
+                m = df[pd.to_numeric(df[idcol], errors="coerce").fillna(-1).astype(int) == n]
+            except Exception:
+                pass
+        if m is None or m.empty:
+            return None, "Boleto no encontrado entre los impresos de esa fecha"
+        row = m.iloc[0]
+        row_lower = {str(c).strip().lower(): row[c] for c in df.columns}
+        grid, pos_map = _build_grid_from_row(row_lower)
+        corr = _corr_get(fecha, serie_archivo, cid)
+        grid, pos_map = _corr_apply_to_grid(grid, pos_map, corr)
 
     stack = _read_stack() or []
     marked = set()
@@ -15331,7 +15724,9 @@ def _hf_juego_figuras_shapes():
 
 @app.get("/juego/boletos/series")
 def _hf_juego_boletos_series():
-    fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
+    fecha = str(request.args.get("fecha") or "").strip()
+    if not fecha:
+        fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
     try:
         series = _juego_series_en_juego(fecha)
         return jsonify(ok=True, fecha=fecha, series=series)
@@ -15341,7 +15736,9 @@ def _hf_juego_boletos_series():
 @app.post("/juego/boletos/consultar")
 def _hf_juego_boletos_consultar():
     data = request.get_json(silent=True) or request.form or {}
-    fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
+    fecha = str(data.get("fecha") or "").strip()
+    if not fecha:
+        fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
     serie_archivo = str(data.get("serie_archivo") or data.get("serie") or "").strip()
     carton_id = str(data.get("carton_id") or data.get("boleto") or data.get("tabla") or "").strip()
     if not serie_archivo:
@@ -15367,7 +15764,9 @@ def _hf_admin_boletos_meta():
     key = data.get("key")
     if not _hf_admin_check_key(key):
         return jsonify(ok=False, error="Clave inválida"), 403
-    fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
+    fecha = str(data.get("fecha") or "").strip()
+    if not fecha:
+        fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
     series = _juego_series_en_juego(fecha)
     return jsonify(ok=True, fecha=fecha, series=series)
 
@@ -15377,7 +15776,9 @@ def _hf_admin_boletos_get():
     key = data.get("key")
     if not _hf_admin_check_key(key):
         return jsonify(ok=False, error="Clave inválida"), 403
-    fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
+    fecha = str(data.get("fecha") or "").strip()
+    if not fecha:
+        fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
     serie_archivo = str(data.get("serie_archivo") or "").strip()
     carton_id = str(data.get("carton_id") or data.get("boleto") or "").strip()
     if not serie_archivo:
@@ -15403,11 +15804,22 @@ def _hf_admin_boletos_get():
             orig_grid = payload.get("grid")
     except Exception:
         orig_grid = payload.get("grid")
+    stack = _read_stack() or []
     payload["original_grid"] = orig_grid
     payload["grid"] = payload.get("grid") or orig_grid
     payload["has_correction"] = bool(corr)
     payload["motivo"] = str(corr.get("motivo","") or "")
     payload["corregido_por"] = str(corr.get("user","") or "")
+    payload["stack"] = stack
+    payload["last"] = (stack[-1] if stack else None)
+    payload["total"] = len(stack)
+    payload["ultimos5"] = list(reversed(stack[-5:]))
+    payload["panel_numeros"] = {
+        "stack": stack,
+        "last": (stack[-1] if stack else None),
+        "total": len(stack),
+        "ultimos5": list(reversed(stack[-5:])),
+    }
     return jsonify(payload)
 
 @app.post("/juego/admin/boletos/save")
@@ -15476,6 +15888,30 @@ def _hf_admin_boletos_save():
         return jsonify(ok=True, warning=f"Corrección guardada, pero no se pudo recalcular: {_e}")
 
     return jsonify(ok=True, msg="Corrección guardada y juego recalculado", fecha=fecha)
+
+@app.get("/juego/admin/boletos/estado")
+def _hf_admin_boletos_estado():
+    stack = _read_stack()
+    last = (stack[-1] if stack else None)
+    return jsonify(
+        ok=True,
+        stack=stack,
+        last=last,
+        total=len(stack),
+        ultimos5=list(reversed(stack[-5:])),
+    )
+
+@app.post("/juego/admin/boletos/marcar")
+def _hf_admin_boletos_marcar():
+    return juego_marcar()
+
+@app.post("/juego/admin/boletos/reversa")
+def _hf_admin_boletos_reversa():
+    return juego_reversa()
+
+@app.post("/juego/admin/boletos/reset")
+def _hf_admin_boletos_reset():
+    return juego_reset()
 
 print("[HOTFIX FINAL] APIs de juego y sincronización activadas")
 
