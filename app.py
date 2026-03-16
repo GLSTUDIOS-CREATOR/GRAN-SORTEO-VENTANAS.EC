@@ -1697,7 +1697,7 @@ def _try_draw_qr_on_canvas(c, data, x, y, size):
         if total <= 0:
             return False
 
-        module = float(size) / float(total)
+        module = max(1.0, float(size) / float(total))
         qr_size = module * total
         ox = x + (size - qr_size) / 2.0
         oy = y + (size - qr_size) / 2.0
@@ -1844,10 +1844,7 @@ def generar_pdf_boletos_excel(
                                 )
                         except Exception:
                             pass
-                        qr_target = (size - 4) * 1.20
-                        qr_x = cx + (size - qr_target) / 2.0
-                        qr_y = cy + (size - qr_target) / 2.0
-                        _try_draw_qr_on_canvas(c, qr_data, qr_x, qr_y, qr_target)
+                        _try_draw_qr_on_canvas(c, qr_data, cx + 2, cy + 2, size - 4)
                     else:
                         v = str(row.get(f"{letra}{r+1}", "-"))
                         c.drawCentredString(cx + size / 2, cy + size * 0.28, v)
@@ -6015,6 +6012,45 @@ def _figuras_de_fecha(fecha_iso):
             return out
     return []
 
+
+def _siguiente_fecha_con_figuras(fecha_base_iso: str) -> str:
+    """
+    Devuelve la siguiente fecha REAL programada en figuras_por_fecha.xml.
+    Si no existe una fecha posterior, mantiene compatibilidad devolviendo
+    el día calendario siguiente a fecha_base_iso.
+    """
+    base = (fecha_base_iso or "").strip()
+    if not _is_fecha_iso(base):
+        base = date.today().isoformat()
+
+    try:
+        base_date = datetime.fromisoformat(base).date()
+    except Exception:
+        base_date = date.today()
+        base = base_date.isoformat()
+
+    candidatas = []
+    try:
+        _ensure_xml(FIGURAS_FECHA_XML, "agenda")
+        root = ET.parse(FIGURAS_FECHA_XML).getroot()
+        for d in root.findall("dia"):
+            fecha_txt = (d.attrib.get("fecha") or "").strip()
+            if not _is_fecha_iso(fecha_txt):
+                continue
+            try:
+                fecha_d = datetime.fromisoformat(fecha_txt).date()
+            except Exception:
+                continue
+            if fecha_d > base_date:
+                candidatas.append(fecha_d)
+    except Exception:
+        candidatas = []
+
+    if candidatas:
+        return min(candidatas).isoformat()
+
+    return (base_date + timedelta(days=1)).isoformat()
+
 # ------------------ Formas 5x5 ------------------
 def _load_shapes():
     shapes = {}
@@ -6603,7 +6639,7 @@ def _parse_spinners(extras: dict):
       - fallback: extras['comodin'] -> usa 'boletos' como numeros y 'texto' como valor
     """
     extras = extras or {}
-    block = extras.get("spinners") or {}
+    block = extras.get("spinners") or extras.get("spinner") or {}
     if not block:
         block = extras.get("comodin") or {}
 
@@ -6621,7 +6657,114 @@ def _parse_spinners(extras: dict):
         except Exception:
             valor = None
 
-    return {"nums": nums, "valor": valor}
+    return {"nums": nums, "valor": valor, "texto": raw_val}
+
+
+def _parse_bonus(extras: dict):
+    """Lee GRAN BONUS / BONUS desde resultados para el PDF."""
+    extras = extras or {}
+    block = extras.get("gran_bonus") or extras.get("granbonus") or extras.get("bonus") or {}
+    raw_nums = block.get("numeros") or block.get("numbers") or ""
+    if isinstance(raw_nums, (list, tuple)):
+        nums = [str(x).strip() for x in raw_nums if str(x).strip()]
+    else:
+        nums = [n.strip() for n in re.findall(r"\d{1,2}", str(raw_nums)) if n.strip()]
+    nums = nums[:10]
+    raw_text = (block.get("texto") or block.get("valor") or "").strip()
+    return {"nums": nums, "texto": raw_text}
+
+def _bonus_from_sources_for_date(fecha_iso: str, extras: dict | None = None):
+    """Resuelve BONUS para PDF desde resultados y, si falta, desde historial bonus_*.json."""
+    data = _parse_bonus(extras or {})
+    if data.get("nums") or data.get("texto"):
+        return data
+    try:
+        items = _bonus_history_items_for_date(fecha_iso) if "_bonus_history_items_for_date" in globals() else []
+    except Exception:
+        items = []
+    if items:
+        src = items[0] or {}
+        nums = [str(x).strip() for x in (src.get("numbers") or []) if str(x).strip()][:10]
+        req = src.get("requested") or {}
+        win = src.get("winners") or {}
+        resumen = []
+        for k in (5,4,3,2,1):
+            rk = str(k)
+            rv = int(req.get(rk, 0) or 0)
+            wv = int(win.get(rk, 0) or 0)
+            if rv or wv:
+                resumen.append(f"{k}A:{wv}/{rv}")
+        texto = " · ".join(resumen) if resumen else (src.get("serie_archivo") or "")
+        return {"nums": nums, "texto": texto}
+    return {"nums": [], "texto": ""}
+
+
+def _spinners_from_sources_for_date(fecha_iso: str, extras: dict | None = None):
+    """Resuelve SPINNERS para PDF desde resultados y, si falta, desde el XML/histórico del sorteo."""
+    data = _parse_spinners(extras or {})
+    if data.get("nums"):
+        return data
+    nums = []
+    try:
+        if "_load_spinners_for_fecha" in globals():
+            nums = [str(x).strip() for x in (_load_spinners_for_fecha(fecha_iso) or []) if str(x).strip()]
+    except Exception:
+        nums = []
+    nums = nums[:20]
+    return {"nums": nums, "valor": data.get("valor"), "texto": data.get("texto") or ""}
+
+
+def _reintegro_from_sources_for_date(fecha_iso: str):
+    """Resuelve reintegro e imagen para PDF usando LOGS y fallback a configuración del sorteo."""
+    data = _reintegro_from_log_for_date(fecha_iso)
+    if data.get("imagen") or data.get("archivo"):
+        return data
+
+    nombre = ""
+    try:
+        if "get_impresiones_info" in globals():
+            imp = get_impresiones_info(fecha_iso) or {}
+            nombre = str(imp.get("reintegro_dia") or imp.get("reintegro") or "").strip()
+    except Exception:
+        nombre = ""
+
+    if not nombre:
+        try:
+            if "_get_sorteo_activo_info" in globals() and (fecha_iso == (_get_sorteo_fecha() if "_get_sorteo_fecha" in globals() else fecha_iso)):
+                info = _get_sorteo_activo_info() or {}
+                nombre = str(info.get("reintegro") or info.get("reintegro_dia") or "").strip()
+        except Exception:
+            pass
+
+    if not nombre:
+        return data
+
+    # Intentar resolver con helper del módulo de juego si existe
+    try:
+        if "_resolve_reintegro_media" in globals():
+            meta = _resolve_reintegro_media(nombre) or {}
+            ruta = meta.get("ruta") or ""
+            if ruta and os.path.exists(ruta):
+                return {"archivo": nombre, "imagen": ruta, "cantidad": None, "fecha": fecha_iso}
+    except Exception:
+        pass
+
+    dirs = []
+    for cand in (
+        globals().get("REINTEGRO_MEDIA_DIR"),
+        globals().get("REINTEGROS_MEDIA_DIR"),
+        os.path.join(STATIC_DIR, "REINTEGRO"),
+        os.path.join(STATIC_DIR, "REINTEGROS"),
+        os.path.join(STATIC_DIR, "reintegro"),
+        os.path.join(STATIC_DIR, "reintegros"),
+        os.path.join(IMG_DIR, "reintegros"),
+        os.path.join(IMG_DIR, "REINTEGROS"),
+    ):
+        if cand and cand not in dirs:
+            dirs.append(cand)
+    img = _find_image_case_insensitive(dirs, nombre)
+    return {"archivo": nombre, "imagen": img, "cantidad": None, "fecha": fecha_iso}
+
 
 def _draw_spinners_card(c, x, y, w, h, nums, valor, font):
     """
@@ -6722,6 +6865,75 @@ def _draw_spinners_card(c, x, y, w, h, nums, valor, font):
             if idx >= n:
                 break
 
+
+def _draw_bonus_card(c, x, y, w, h, nums, texto, font):
+    """Tarjeta elegante para BONUS / GRAN BONUS."""
+    c.setFillColor(colors.HexColor("#FFF7D6"))
+    c.setStrokeColor(colors.HexColor("#E7B91E"))
+    c.roundRect(x, y, w, h, 10, stroke=1, fill=1)
+
+    pad = 10
+    header_h = 20
+    c.setFillColor(colors.HexColor("#D4A414"))
+    c.roundRect(x, y + h - header_h, w, header_h, 10, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont(font, 10)
+    c.drawCentredString(x + w/2, y + h - 14, "BONUS")
+
+    nums = [str(n).zfill(2) for n in (nums or []) if str(n).strip()][:10]
+    if texto:
+        c.setFillColor(colors.HexColor("#6B7280"))
+        c.setFont(font, 7.6)
+        txt = _fit_text_one_line(c, str(texto), font, 7.6, w - 2*pad)
+        c.drawCentredString(x + w/2, y + h - header_h - 10, txt)
+
+    body_top = y + h - header_h - (14 if texto else 8)
+    body_h = max(24, body_top - y - 8)
+
+    if not nums:
+        c.setFillColor(colors.HexColor("#9CA3AF"))
+        c.setFont(font, 10)
+        c.drawCentredString(x + w/2, y + body_h/2, "SIN BONUS")
+        return
+
+    cols = 5 if len(nums) > 5 else max(1, len(nums))
+    rows = int(math.ceil(len(nums) / float(cols)))
+    gap_x = 8
+    gap_y = 8
+    inner_w = w - 2 * pad
+    inner_h = body_h - 10
+    ball = min((inner_w - (cols - 1) * gap_x) / cols, (inner_h - (rows - 1) * gap_y) / rows, 28)
+    ball = max(18, ball)
+    total_grid_w = cols * ball + (cols - 1) * gap_x
+    total_grid_h = rows * ball + (rows - 1) * gap_y
+    start_x = x + pad + max(0, (inner_w - total_grid_w) / 2)
+    start_y = y + 8 + max(0, (inner_h - total_grid_h) / 2) + (rows - 1) * (ball + gap_y)
+
+    for i, n in enumerate(nums):
+        col = i % cols
+        row = i // cols
+        bx = start_x + col * (ball + gap_x)
+        by = start_y - row * (ball + gap_y)
+        c.setFillColor(colors.HexColor("#FACC15"))
+        c.setStrokeColor(colors.HexColor("#B7791F"))
+        c.circle(bx + ball/2, by + ball/2, ball/2, stroke=1, fill=1)
+        c.setFillColor(colors.HexColor("#1F2937"))
+        fs = max(8, min(12, ball * 0.40))
+        c.setFont(font, fs)
+        tw = pdfmetrics.stringWidth(n, font, fs)
+        c.drawString(bx + (ball - tw)/2, by + (ball - fs)/2 + 1, n)
+
+
+def _fit_text_one_line(c, txt, font, size, max_w):
+    txt = _safe_text(txt or "", font)
+    if pdfmetrics.stringWidth(txt, font, size) <= max_w:
+        return txt
+    base = txt
+    while base and pdfmetrics.stringWidth(base + "...", font, size) > max_w:
+        base = base[:-1]
+    return (base + "...") if base else ""
+
+
 # ------------------ Rutas Flask ------------------
 
 @app.get("/api/figuras-manana")
@@ -6729,10 +6941,10 @@ def api_figuras_manana():
     base = (request.args.get("fecha") or date.today().isoformat()).strip()
     if not _is_fecha_iso(base):
         base = date.today().isoformat()
-    manana = (datetime.fromisoformat(base) + timedelta(days=1)).date().isoformat()
-    figs = _figuras_de_fecha(manana)
+    fecha_objetivo = _siguiente_fecha_con_figuras(base)
+    figs = _figuras_de_fecha(fecha_objetivo)
     total = sum((f.get("valor") or 0.0) for f in figs)
-    return jsonify({"ok": True, "fecha": manana, "figuras": figs, "total": total})
+    return jsonify({"ok": True, "fecha": fecha_objetivo, "figuras": figs, "total": total})
 
 @app.get("/api/resultados")
 def api_resultados():
@@ -6861,10 +7073,10 @@ def api_layout_get():
     fecha = (request.args.get("fecha") or date.today().isoformat()).strip()
     if not _is_fecha_iso(fecha):
         fecha = date.today().isoformat()
-    manana = (datetime.fromisoformat(fecha) + timedelta(days=1)).date().isoformat()
-    figs = _figuras_de_fecha(manana)
+    fecha_objetivo = _siguiente_fecha_con_figuras(fecha)
+    figs = _figuras_de_fecha(fecha_objetivo)
     lay  = _layout_for(fecha, figs, scale=FIG_BLOCK_SCALE, fixed_cols=FIG_FIXED_COLS)
-    return jsonify({"ok": True, "layout": lay, "figuras": figs})
+    return jsonify({"ok": True, "fecha": fecha_objetivo, "layout": lay, "figuras": figs})
 
 @app.post("/api/boletin-layout/save")
 def api_layout_save():
@@ -6910,7 +7122,6 @@ def boletin_pdf():
         if not _is_fecha_iso(fecha):
             fecha = date.today().isoformat()
 
-        # escala de figuras + columnas
         qscale = request.args.get("scale")
         qcols  = request.args.get("cols")
         fixed_cols = int(qcols) if qcols else (FIG_FIXED_COLS or None)
@@ -6925,7 +7136,6 @@ def boletin_pdf():
             scale = max(0.5, min(1.2, scale))
             force_autofit = True
 
-        # Escalas opcionales
         def _float_arg(name, default):
             v = request.args.get(name)
             if v is None:
@@ -6936,25 +7146,22 @@ def boletin_pdf():
                 return default
 
         LOGO_SCALE = max(0.5, min(2.0, _float_arg("logo_scale", LOGO_SCALE_DEFAULT)))
-        REIN_SCALE = max(0.5, min(1.6, _float_arg("rein_scale", 1.05)))
-        SPIN_SCALE = max(0.5, min(1.6, _float_arg("spin_scale", 1.00)))
+        REIN_SCALE = max(0.5, min(1.8, _float_arg("rein_scale", 1.10)))
+        SPIN_SCALE = max(0.5, min(1.8, _float_arg("spin_scale", 1.10)))
+        BONUS_SCALE = max(0.5, min(1.8, _float_arg("bonus_scale", 1.08)))
 
-        dt = datetime.fromisoformat(fecha).date()
-        manana = (dt + timedelta(days=1)).isoformat()
-
-        figs_manana  = _figuras_de_fecha(manana)
+        fecha_objetivo = _siguiente_fecha_con_figuras(fecha)
+        figs_manana  = _figuras_de_fecha(fecha_objetivo)
         total_manana = sum((f.get("valor") or 0.0) for f in figs_manana)
         resultados   = _cargar_resultados(fecha)
         shapes       = _load_shapes()
         layout       = _layout_for(fecha, figs_manana, scale=scale, force_autofit=force_autofit, fixed_cols=fixed_cols)
 
-        # Reintegro (por fecha) desde LOGS
-        rein_log = _reintegro_from_log_for_date(fecha)
+        extras = resultados.get("extras") or {}
+        rein_log   = _reintegro_from_sources_for_date(fecha)
+        sp_data    = _spinners_from_sources_for_date(fecha, extras)
+        bonus_data = _bonus_from_sources_for_date(fecha, extras)
 
-        # SPINNERS (Extras)
-        sp_data = _parse_spinners(resultados.get("extras") or {})
-
-        # Backfill posiciones
         default_figs_pos = _default_layout(figs_manana, scale=scale, fixed_cols=fixed_cols)["figs"]
         layout.setdefault("figs", {})
         for f in figs_manana:
@@ -6965,7 +7172,6 @@ def boletin_pdf():
         buf = BytesIO()
         c = canvas.Canvas(buf, pagesize=A4)
         W, H = A4
-
         FONT = _register_font()
         T = lambda s: _safe_text(s, FONT)
 
@@ -6974,7 +7180,6 @@ def boletin_pdf():
         c.setFillColor(colors.HexColor("#E7B91E"))
         c.rect(0, H - header_h, W, header_h, 0, 1)
 
-        # Logo
         logo_candidates = [
             os.path.join(BASE_DIR, "static", "golpe_suerte_logo.png"),
             os.path.join(IMG_DIR, "logo.png"),
@@ -6993,33 +7198,30 @@ def boletin_pdf():
                 f = min(L["w"]/draw_w, L["h"]/draw_h, 1.0)
                 draw_w *= f
                 draw_h *= f
-            c.drawImage(img, L["x"], H - (L["y"] + draw_h),
-                        width=draw_w, height=draw_h,
-                        preserveAspectRatio=True, mask="auto")
+            c.drawImage(img, L["x"], H - (L["y"] + draw_h), width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
 
-        # Título + fecha
         c.setFillColor(colors.black)
         c.setFont(FONT, 18)
         c.drawCentredString(W/2, H - 42, T("JUEGO HOY"))
         c.setFont(FONT, 11)
-        c.drawCentredString(W/2, H - 58, T(_es_corta(manana).capitalize()))
+        c.drawCentredString(W/2, H - 58, T(_es_corta(fecha_objetivo).capitalize()))
 
-        # Total a jugar
         TL = layout.get("total", {"x": W - 22, "y": 24, "size": 56, "align": "right"})
-        c.setFillColor(colors.white); c.setFont(FONT, 11)
+        c.setFillColor(colors.white)
+        c.setFont(FONT, 11)
         c.drawRightString(W - 18, H - 22, T("PREMIO TOTAL"))
         amount = T(_money_header(total_manana))
-        _draw_ultrablack(c, amount,
-                         TL.get("x", W - 22),
-                         H - (TL.get("y", 24) + TL.get("size", 56)),
-                         TL.get("size", 56), FONT)
+        _draw_ultrablack(c, amount, TL.get("x", W - 22), H - (TL.get("y", 24) + TL.get("size", 56)), TL.get("size", 56), FONT)
 
-        # ---------- Figuras de mañana ----------
+        # ---------- Figuras del siguiente sorteo ----------
         fig_lay = layout.get("figs", {})
         for f in figs_manana:
-            name = f["nombre"]; val = f.get("valor") or 0.0
+            name = f["nombre"]
+            val = f.get("valor") or 0.0
             pos = fig_lay.get(name) or {}
-            bx = float(pos.get("x", 50)); by = float(pos.get("y", header_h + 28)); bw = float(pos.get("size", 96))
+            bx = float(pos.get("x", 50))
+            by = float(pos.get("y", header_h + 28))
+            bw = float(pos.get("size", 96))
 
             _chip(c, bx, H - by, bw, T(_money(val)), FONT, "#1F58FF", 10)
             grid_top = H - by - 22
@@ -7027,28 +7229,40 @@ def boletin_pdf():
             _grid5(c, bx, grid_top, bw, mask)
             _bar(c, bx, grid_top - (bw + 8), bw, T(name.upper()), FONT, "#0E2E8E", 10)
 
-        # ---------- Resultados ----------
+        # ---------- Resultados estructurados ----------
         block_h_extra = 22 + 8 + 18
         max_depth = header_h
         for f in figs_manana:
             pos = fig_lay.get(f["nombre"]) or {}
-            by   = float(pos.get("y", header_h + 28))
-            bw   = float(pos.get("size", 96))
+            by = float(pos.get("y", header_h + 28))
+            bw = float(pos.get("size", 96))
             depth = by + (bw + block_h_extra)
             if depth > max_depth:
                 max_depth = depth
 
-        depth = max_depth + 28
+        depth = max_depth + 24
         y = H - depth
-        MIN_Y_FIRST_PAGE = 120
+        MIN_Y_FIRST_PAGE = 126
         if y < MIN_Y_FIRST_PAGE:
             y = MIN_Y_FIRST_PAGE
 
-        # Banda compacta
-        c.setFillColor(colors.HexColor("#2B2370")); c.rect(0, y, W, 16, 0, 1)
-        c.setFillColor(colors.white); c.setFont(FONT, 10)
-        c.drawCentredString(W/2, y + 4, T(f"RESULTADOS SORTEO { _es_largo(fecha) }"))
-        y -= 4
+        items_resultado = list(resultados.get("items") or [])
+        items_con_ganador = [it for it in items_resultado if (it.get("ganadores") or [])]
+        items_a_mostrar = items_con_ganador or items_resultado
+        total_ganadores = sum(len(it.get("ganadores") or []) for it in items_resultado)
+
+        c.setFillColor(colors.HexColor("#2B2370"))
+        c.rect(0, y, W, 18, 0, 1)
+        c.setFillColor(colors.white)
+        c.setFont(FONT, 10)
+        c.drawCentredString(W/2, y + 5, T(f"RESULTADOS SORTEO { _es_largo(fecha) }"))
+        y -= 8
+
+        chip_y = y
+        _chip(c, 16, chip_y, 132, T(f"FIGURAS DEL DIA: {len(items_resultado)}"), FONT, "#1E40AF", 9)
+        _chip(c, 154, chip_y, 136, T(f"FIGURAS PREMIADAS: {len(items_con_ganador)}"), FONT, "#1D4ED8", 9)
+        _chip(c, 296, chip_y, 118, T(f"GANADORES: {total_ganadores}"), FONT, "#0F766E", 9)
+        y -= 28
 
         agenda = _figuras_de_fecha(fecha)
         premio_map = {a["nombre"].strip().lower(): (a.get("valor") or 0.0) for a in agenda}
@@ -7061,57 +7275,73 @@ def boletin_pdf():
 
         def bloque(fig, ganadores, premio_total):
             nonlocal y
-            ensure_space(120)
-            y -= 16
-            c.setFillColor(colors.HexColor("#EDF2FF")); c.rect(14, y, W - 28, 18, 0, 1)
-            c.setFillColor(colors.HexColor("#203880")); c.setFont(FONT, 10)
-            c.drawCentredString(W / 2, y + 5, T(fig.upper()))
-            c.drawRightString(W - 20, y + 5, T(f"Premio total { _money(premio_total) }"))
-            y -= 20
+            rows = list(ganadores or [])
+            if not rows:
+                rows = [{"boleto": "—", "nombre": "SIN GANADOR REGISTRADO", "vendedor": "—", "sector": "", "premio": 0.0, "_placeholder": True}]
 
-            c.setFillColor(colors.HexColor("#6B7280")); c.setFont(FONT, 9)
-            c.drawString(20, y, T("Boleto"))
-            c.drawString(86, y, T("Nombre"))
-            c.drawString(320, y, T("Vendedor"))
-            c.drawRightString(W - 20, y, T("Premio"))
-            y -= 8
-            c.setStrokeColor(colors.HexColor("#CBD5F1")); c.line(14, y, W - 14, y)
-            y -= 8
+            row_h = 16
+            box_h = 42 + (len(rows) * row_h) + 14
+            ensure_space(box_h + 12, top_margin=26)
+            y -= box_h
 
-            par = True
-            for g in (ganadores or []):
-                ensure_space(30)
-                if par:
-                    c.setFillColor(colors.HexColor("#F7F9FF")); c.rect(14, y - 12, W - 28, 14, 0, 1)
-                par = not par
-                c.setFillColor(colors.black); c.setFont(FONT, 9)
-                nombre = g.get("nombre", "") or ""
-                vendedor = (g.get("vendedor", "") or "").strip()
-                planilla = (g.get("sector", "") or "").strip()
-                
-                # Si NO hay vendedor (planilla sin asignar), mostramos el nombre del sorteo
-                sorteo_nombre = ""
-                try:
-                    sorteo_nombre = (layout.get("sorteo") or layout.get("nombre_sorteo") or "").strip()
-                except Exception:
-                    sorteo_nombre = ""
+            bx = 14
+            bw = W - 28
+            by = y
+
+            c.setFillColor(colors.HexColor("#F8FAFF"))
+            c.setStrokeColor(colors.HexColor("#CBD5F1"))
+            c.roundRect(bx, by, bw, box_h, 10, stroke=1, fill=1)
+
+            c.setFillColor(colors.HexColor("#203880"))
+            c.roundRect(bx, by + box_h - 22, bw, 22, 10, stroke=0, fill=1)
+            c.setFillColor(colors.white)
+            c.setFont(FONT, 10)
+            c.drawString(bx + 10, by + box_h - 15, T(fig.upper()))
+            c.drawRightString(bx + bw - 10, by + box_h - 15, T(f"PREMIO TOTAL { _money(premio_total) }"))
+
+            c.setFillColor(colors.HexColor("#64748B"))
+            c.setFont(FONT, 8)
+            c.drawString(bx + 8, by + box_h - 34, T("Boleto"))
+            c.drawString(bx + 74, by + box_h - 34, T("Nombre / Observacion"))
+            c.drawString(bx + 322, by + box_h - 34, T("Vendedor / Sector"))
+            c.drawRightString(bx + bw - 10, by + box_h - 34, T("Premio"))
+            c.setStrokeColor(colors.HexColor("#E2E8F0"))
+            c.line(bx + 8, by + box_h - 38, bx + bw - 8, by + box_h - 38)
+
+            row_y = by + box_h - 52
+            for i, g in enumerate(rows):
+                if i % 2 == 0:
+                    c.setFillColor(colors.HexColor("#F1F5FF"))
+                    c.roundRect(bx + 6, row_y - 9, bw - 12, 14, 4, stroke=0, fill=1)
+
+                boleto = str(g.get("boleto") or "—")
+                nombre = str(g.get("nombre") or "—")
+                vendedor = str(g.get("vendedor") or "").strip()
+                sector = str(g.get("sector") or "").strip()
                 if not vendedor:
-                    vendedor = sorteo_nombre or "GOLPE DE SUERTE"
-                
-                vend_show = vendedor if not planilla else f"{vendedor} · {planilla}"
-                
-                c.drawString(20, y - 9, T(g.get("boleto", "")))
-                c.drawString(86, y - 9, T(nombre))
-                c.drawString(320, y - 9, T(vend_show))
+                    vendedor = (layout.get("sorteo") or layout.get("nombre_sorteo") or "GOLPE DE SUERTE")
+                vend_show = vendedor if not sector else f"{vendedor} · {sector}"
+                nombre = _fit_text_one_line(c, nombre, FONT, 8.7, 230)
+                vend_show = _fit_text_one_line(c, vend_show, FONT, 8.5, 180)
+
                 try:
                     prem = float(g.get("premio") or 0.0)
                 except Exception:
                     prem = 0.0
-                c.drawRightString(W - 20, y - 9, T(_money(prem)))
-                y -= 14
-            y -= 4
+                if g.get("_placeholder") and premio_total:
+                    prem = float(premio_total or 0.0)
 
-        for item in (resultados.get("items") or []):
+                c.setFillColor(colors.HexColor("#111827"))
+                c.setFont(FONT, 8.7)
+                c.drawString(bx + 8, row_y - 5, T(boleto))
+                c.drawString(bx + 74, row_y - 5, T(nombre))
+                c.drawString(bx + 322, row_y - 5, T(vend_show))
+                c.drawRightString(bx + bw - 10, row_y - 5, T(_money(prem)))
+                row_y -= row_h
+
+            y -= 10
+
+        for item in items_a_mostrar:
             nom = item.get("figura", "")
             gan = item.get("ganadores") or []
             premio = premio_map.get(nom.strip().lower(), 0.0)
@@ -7119,70 +7349,80 @@ def boletin_pdf():
                 premio = sum((g.get("premio") or 0.0) for g in gan)
             bloque(nom, gan, premio)
 
-        # ---------- Tarjetas inferiores ----------
-        margin = 12
-        espacio_disponible = (y - margin)
+        # ---------- Extras inferiores: BONUS, SPINNERS, REINTEGRO ----------
+        extras_cards = []
+        if bonus_data.get("nums") or bonus_data.get("texto"):
+            extras_cards.append("bonus")
+        if sp_data.get("nums") or (sp_data.get("valor") is not None):
+            extras_cards.append("spinners")
+        if rein_log.get("imagen") or rein_log.get("archivo"):
+            extras_cards.append("reintegro")
 
-        # SPINNERS (izquierda)
-        sp_base_h = 86
-        sp_base_w = 360
-        sp_h = sp_base_h * SPIN_SCALE
-        sp_w = sp_base_w * SPIN_SCALE
-        if espacio_disponible < (sp_h + 20):
-            factor = max(0.40, (espacio_disponible - 20) / max(sp_h, 1))
-            sp_h *= factor
-            sp_w *= factor
-        if sp_data["nums"] or (sp_data["valor"] is not None):
-            _draw_spinners_card(c, margin, margin, sp_w, sp_h, sp_data["nums"], sp_data["valor"], FONT)
+        if extras_cards:
+            section_h = 160
+            ensure_space(section_h + 24, top_margin=24)
+            c.setFillColor(colors.HexColor("#2B2370"))
+            c.rect(0, y, W, 16, 0, 1)
+            c.setFillColor(colors.white)
+            c.setFont(FONT, 10)
+            c.drawCentredString(W/2, y + 4, T("EXTRAS DEL SORTEO"))
+            y -= (section_h + 10)
 
-        # REINTEGRO (derecha)
-        rein_base_h = 90
-        rein_base_w = int(rein_base_h * 3.75)
-        card_h = rein_base_h * REIN_SCALE
-        card_w = rein_base_w * REIN_SCALE
-        if espacio_disponible < (card_h + 20):
-            factor = max(0.40, (espacio_disponible - 20) / max(card_h, 1))
-            card_h *= factor
-            card_w *= factor
+            margin = 12
+            gap = 10
+            count = len(extras_cards)
+            slot_w = (W - (2 * margin) - ((count - 1) * gap)) / max(1, count)
+            card_y = y
+            cur_x = margin
 
-        rein_x = W - margin - card_w
-        base_y = margin
+            for kind in extras_cards:
+                if kind == "bonus":
+                    _draw_bonus_card(c, cur_x, card_y, slot_w, section_h, bonus_data.get("nums") or [], bonus_data.get("texto") or "", FONT)
+                elif kind == "spinners":
+                    _draw_spinners_card(c, cur_x, card_y, slot_w, section_h, sp_data.get("nums") or [], sp_data.get("valor"), FONT)
+                elif kind == "reintegro":
+                    c.setFillColor(colors.HexColor("#FFFFFF"))
+                    c.setStrokeColor(colors.HexColor("#CBD5F1"))
+                    c.roundRect(cur_x, card_y, slot_w, section_h, 10, stroke=1, fill=1)
 
-        if rein_log.get("imagen"):
-            c.setFillColor(colors.HexColor("#D1D5DB"))
-            c.roundRect(rein_x+2.5, base_y-2.5, card_w, card_h, 10, stroke=0, fill=1)
-            c.setFillColor(colors.white); c.setStrokeColor(colors.HexColor("#CBD5F1"))
-            c.roundRect(rein_x, base_y, card_w, card_h, 10, stroke=1, fill=1)
+                    c.setFillColor(colors.HexColor("#2B2370"))
+                    c.roundRect(cur_x, card_y + section_h - 20, slot_w, 20, 10, stroke=0, fill=1)
+                    c.setFillColor(colors.white)
+                    c.setFont(FONT, 10)
+                    c.drawCentredString(cur_x + slot_w/2, card_y + section_h - 14, "REINTEGRO")
 
-            gap = 25
-            label_w = card_w * 0.45
-            img_w   = card_w - label_w - gap - 10
-            label_x = rein_x + 8
-            img_x   = label_x + label_w + gap
-            inner_y = base_y + 8
-            inner_h = card_h - 16
+                    label = str((rein_log.get("archivo") or "")).rsplit('.', 1)[0].strip() or "SIN REINTEGRO"
+                    c.setFillColor(colors.HexColor("#1F2937"))
+                    c.setFont(FONT, 9)
+                    txt = _fit_text_one_line(c, label, FONT, 9, slot_w - 16)
+                    c.drawCentredString(cur_x + slot_w/2, card_y + 22, T(txt))
 
-            c.setFillColor(colors.HexColor("#190042"))
-            c.setFont(FONT, max(12, int(16 * REIN_SCALE)))
-            text_y = inner_y + (inner_h / 2) - 6
-            c.drawString(label_x, text_y, "REINTEGRO")
-
-            c.setStrokeColor(colors.HexColor("#0C8A3E"))
-            c.setLineWidth(1)
-            c.line(label_x, text_y - 4, label_x + (label_w * 0.60), text_y - 4)
-
-            c.drawImage(
-                rein_log["imagen"], img_x, inner_y,
-                width=img_w, height=inner_h,
-                preserveAspectRatio=True, anchor='sw', mask='auto'
-            )
+                    if rein_log.get("imagen") and os.path.exists(str(rein_log.get("imagen"))):
+                        try:
+                            img = ImageReader(str(rein_log.get("imagen")))
+                            iw, ih = img.getSize()
+                            max_w = slot_w - 22
+                            max_h = section_h - 54
+                            s = min(max_w / float(iw), max_h / float(ih), 1.0)
+                            draw_w = iw * s
+                            draw_h = ih * s
+                            ix = cur_x + (slot_w - draw_w) / 2.0
+                            iy = card_y + 30 + max(0, (max_h - draw_h) / 2.0)
+                            c.drawImage(img, ix, iy, width=draw_w, height=draw_h, preserveAspectRatio=True, mask='auto')
+                        except Exception:
+                            c.setFillColor(colors.HexColor("#9CA3AF"))
+                            c.setFont(FONT, 10)
+                            c.drawCentredString(cur_x + slot_w/2, card_y + section_h/2, "SIN IMAGEN")
+                    else:
+                        c.setFillColor(colors.HexColor("#9CA3AF"))
+                        c.setFont(FONT, 10)
+                        c.drawCentredString(cur_x + slot_w/2, card_y + section_h/2, "SIN IMAGEN")
+                cur_x += slot_w + gap
 
         c.showPage()
         c.save()
         buf.seek(0)
-        return send_file(buf, as_attachment=True,
-                         download_name=f"boletin_{fecha}.pdf",
-                         mimetype="application/pdf")
+        return send_file(buf, as_attachment=True, download_name=f"boletin_{fecha}.pdf", mimetype="application/pdf")
 
     except Exception:
         import traceback
@@ -7823,8 +8063,9 @@ def _resolve_reintegro_media(reinteg_name: str):
 
 def _build_reintegro_root(fecha: str, nombre: str, archivo: str, ruta: str, carpeta: str, encontrado=False, click_count=0, click_token=""):
     root = ET.Element("reintegro", {"fecha": str(fecha or "")})
-    ET.SubElement(root, "nombre").text = str(nombre or "")
-    ET.SubElement(root, "valor").text = str(nombre or "")
+    nombre_limpio = _reintegro_stem(nombre)
+    ET.SubElement(root, "nombre").text = str(nombre_limpio or "")
+    ET.SubElement(root, "valor").text = str(nombre_limpio or "")
     ET.SubElement(root, "activo").text = "1" if str(nombre or "").strip() else "0"
     ET.SubElement(root, "click_count").text = str(int(click_count or 0))
     ET.SubElement(root, "click_token").text = str(click_token or "")
@@ -14473,6 +14714,7 @@ def juego_figuras_sync_xml():
 # ============================================================
 VMIX_TOTAL_JUGAR_REL = "vmix_total_jugar.xml"
 VMIX_FIGURAS_ESTADO_REL = "vmix_figuras_estado.xml"
+VMIX_FIGURAS_ESTADO_2COL_REL = "vmix_figuras_estado_2col.xml"
 
 
 def _vmix_money_fmt(v):
@@ -14532,6 +14774,60 @@ def _winner_name_for_vmix(g: dict) -> str:
     if sector:
         return sector
     return '-'
+
+
+def _winner_ticket_text_for_vmix(g: dict) -> str:
+    nombre = str((g or {}).get('nombre') or '').strip()
+    boleto = str((g or {}).get('boleto') or '').strip()
+    vendedor = str((g or {}).get('vendedor') or '').strip()
+    sector = str((g or {}).get('sector') or '').strip()
+
+    if boleto and nombre:
+        return f'#{boleto} {nombre}'
+    if boleto:
+        return f'#{boleto}'
+    if nombre:
+        return nombre
+    if vendedor:
+        return vendedor
+    if sector:
+        return sector
+    return '-'
+
+
+def _vmix_figuras_estado_2col_root(fecha: str | None = None):
+    fecha = str(fecha or _get_sorteo_fecha() or date.today().isoformat()).strip()
+    resultados = _cargar_resultados(fecha) or {'items': []}
+    items = list(resultados.get('items') or [])
+
+    root = ET.Element('figuras_estado_2col', {
+        'fecha': fecha,
+        'total': str(len(items)),
+        'orden': 'filas',
+    })
+
+    for idx, item in enumerate(items, start=1):
+        nombre_raw = str(item.get('figura') or item.get('nombre') or '').strip()
+        if not nombre_raw:
+            continue
+
+        figura = _panel_name_display(nombre_raw)
+        ganadores = list(item.get('ganadores') or [])
+        if ganadores:
+            valores = []
+            for g in ganadores:
+                t = _winner_ticket_text_for_vmix(g)
+                if t and t != '-':
+                    valores.append(t)
+            resultado = ' / '.join(valores) if valores else '-'
+        else:
+            resultado = '-'
+
+        fila = ET.SubElement(root, 'fila')
+        ET.SubElement(fila, 'figura').text = figura
+        ET.SubElement(fila, 'resultado').text = resultado
+
+    return root
 
 
 def _vmix_figuras_estado_root(fecha: str | None = None):
@@ -14599,6 +14895,17 @@ def juego_xml_figuras_estado():
     root = _vmix_figuras_estado_root(fecha)
     try:
         _write_xml_both(ET.ElementTree(root), VMIX_FIGURAS_ESTADO_REL)
+    except Exception:
+        pass
+    return _vmix_xml_response(root)
+
+
+@juego_bp.get('/xml/figuras_estado_2col')
+def juego_xml_figuras_estado_2col():
+    fecha = (request.args.get('fecha') or _get_sorteo_fecha()).strip()
+    root = _vmix_figuras_estado_2col_root(fecha)
+    try:
+        _write_xml_both(ET.ElementTree(root), VMIX_FIGURAS_ESTADO_2COL_REL)
     except Exception:
         pass
     return _vmix_xml_response(root)
@@ -16299,11 +16606,413 @@ try:
 except Exception:
     pass
 
+
+# ============================
+#  GANADORES DETALLE XML (vMix)
+# ============================
+try:
+    VMIX_GANADORES_DETALLE_XML = globals().get("VMIX_GANADORES_DETALLE_XML") or _persist("static", "db", "vmix_ganadores_detalle.xml")
+except Exception:
+    VMIX_GANADORES_DETALLE_XML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "db", "vmix_ganadores_detalle.xml")
+
+try:
+    VMIX_GANADORES_DETALLE_XML_PUBLIC = globals().get("VMIX_GANADORES_DETALLE_XML_PUBLIC") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "db", "vmix_ganadores_detalle.xml")
+except Exception:
+    VMIX_GANADORES_DETALLE_XML_PUBLIC = VMIX_GANADORES_DETALLE_XML
+
+_GDX_FIELDS = [
+    "numero_figura", "figura", "valor_figura", "boleto", "vendedor", "planilla", "rango",
+    "sector", "nombre", "cliente_nombre", "cabala", "celular", "serie", "scan_at",
+    "ultima_bola", "texto_completo"
+]
+
+_GDX_LINE_SPECS = [
+    ("boleto", "BOLETO"),
+    ("vendedor", "VENDEDOR"),
+    ("valor_figura", "VALOR PREMIO"),
+    ("figura", "FIGURA"),
+    ("numero_figura", "NRO FIGURA"),
+    ("planilla", "PLANILLA"),
+    ("rango", "RANGO"),
+    ("sector", "SECTOR"),
+    ("cabala", "NOMBRE/CABALA"),
+    ("celular", "CELULAR"),
+    ("serie", "SERIE"),
+    ("scan_at", "SCAN"),
+    ("ultima_bola", "ULTIMA BOLA"),
+]
+
+def _gdx_str(v):
+    try:
+        return str(v or "").strip()
+    except Exception:
+        return ""
+
+def _gdx_dash(v):
+    s = _gdx_str(v)
+    return s if s else "—"
+
+def _gdx_safe_float(v):
+    try:
+        return float(v or 0.0)
+    except Exception:
+        return 0.0
+
+def _gdx_num_fig_map(fecha_iso: str) -> dict:
+    out = {}
+    try:
+        figs = _figuras_de_fecha(str(fecha_iso)) or []
+        idx = 0
+        for f in figs:
+            nombre = _gdx_str((f or {}).get("nombre") or (f or {}).get("figura"))
+            if not nombre:
+                continue
+            idx += 1
+            out.setdefault(nombre.lower(), idx)
+    except Exception:
+        pass
+    return out
+
+def _gdx_resultado_nombre(fecha_iso: str, figura: str, boleto: str) -> str:
+    figura_key = _gdx_str(figura).lower()
+    boleto_key = _norm_tabla_id(boleto) if "_norm_tabla_id" in globals() else _gdx_str(boleto)
+    try:
+        data = _cargar_resultados(str(fecha_iso)) or {}
+        for item in (data.get("items") or []):
+            nom = _gdx_str((item or {}).get("figura"))
+            if not nom or nom.lower() != figura_key:
+                continue
+            for g in ((item or {}).get("ganadores") or []):
+                b = _norm_tabla_id((g or {}).get("boleto") or "") if "_norm_tabla_id" in globals() else _gdx_str((g or {}).get("boleto"))
+                if boleto_key and b and b != boleto_key:
+                    continue
+                nombre = _gdx_str((g or {}).get("nombre"))
+                if nombre:
+                    return nombre
+    except Exception:
+        pass
+    return ""
+
+def _gdx_winners_from_json(fecha_iso: str) -> list:
+    out = []
+    try:
+        data = _safe_json_read(GANADORES_JSON) or {}
+        raw = data.get(str(fecha_iso)) or []
+        if isinstance(raw, list):
+            for w in raw:
+                if isinstance(w, dict):
+                    out.append(dict(w))
+    except Exception:
+        pass
+    return out
+
+def _gdx_winners_from_xml(fecha_iso: str) -> list:
+    out = []
+    try:
+        path = GANADORES_XML if os.path.exists(GANADORES_XML) else GANADORES_XML_PUBLIC
+        if not path or not os.path.exists(path):
+            return out
+        root = ET.parse(path).getroot()
+        root_fecha = _gdx_str(root.attrib.get("fecha"))
+        if root_fecha and str(root_fecha) != str(fecha_iso):
+            return out
+        for n in root.findall("ganador"):
+            out.append({
+                "fecha": str(fecha_iso),
+                "figura": _gdx_str(n.attrib.get("figura")),
+                "fig_code": _gdx_str(n.attrib.get("fig_code")),
+                "valor": _gdx_safe_float(n.attrib.get("valor")),
+                "serie": _gdx_str(n.attrib.get("serie")),
+                "tabla": _gdx_str(n.attrib.get("tabla")),
+                "boleto": _gdx_str(n.attrib.get("tabla")),
+                "ultima_bola": _gdx_str(n.attrib.get("ultima_bola")),
+            })
+    except Exception:
+        pass
+    return out
+
+def _gdx_winners_from_resultados(fecha_iso: str) -> list:
+    out = []
+    try:
+        data = _cargar_resultados(str(fecha_iso)) or {}
+        for item in (data.get("items") or []):
+            figura = _gdx_str((item or {}).get("figura"))
+            if not figura:
+                continue
+            for g in ((item or {}).get("ganadores") or []):
+                out.append({
+                    "fecha": str(fecha_iso),
+                    "figura": figura,
+                    "valor": _gdx_safe_float((g or {}).get("premio")),
+                    "tabla": _gdx_str((g or {}).get("boleto")),
+                    "boleto": _gdx_str((g or {}).get("boleto")),
+                    "vendedor": _gdx_str((g or {}).get("vendedor")),
+                    "sector": _gdx_str((g or {}).get("sector")),
+                    "nombre": _gdx_str((g or {}).get("nombre")),
+                })
+    except Exception:
+        pass
+    return out
+
+def _gdx_pick_winners(fecha_iso: str) -> list:
+    winners = _gdx_winners_from_json(fecha_iso)
+    if winners:
+        return winners
+    winners = _gdx_winners_from_xml(fecha_iso)
+    if winners:
+        return winners
+    return _gdx_winners_from_resultados(fecha_iso)
+
+def _gdx_qr_lookup(fecha_iso: str, serie: str, boleto: str) -> dict:
+    try:
+        qr = _qr_buscar_registro_ticket(str(fecha_iso), serie, boleto) or {}
+        if qr:
+            return qr
+    except Exception:
+        pass
+    try:
+        _qr_ensure_xml(QR_REGISTROS_XML, "registros_qr")
+        root = ET.parse(QR_REGISTROS_XML).getroot()
+        boleto_key = _gdx_str(boleto)
+        serie_key = os.path.basename(_gdx_str(serie)).lower()
+        fallback = None
+        for r in root.findall("registro"):
+            fecha_r = _gdx_str(r.attrib.get("fecha_sorteo"))
+            boleto_r = _gdx_str(r.attrib.get("boleto"))
+            if fecha_r != _gdx_str(fecha_iso) or boleto_r != boleto_key:
+                continue
+            serie_r = os.path.basename(_gdx_str(r.attrib.get("serie"))).lower()
+            item = {
+                "cliente_nombre": r.attrib.get("cliente_nombre", ""),
+                "sector": r.attrib.get("sector", ""),
+                "celular": r.attrib.get("celular", ""),
+                "vendedor": r.attrib.get("vendedor", ""),
+                "planilla": r.attrib.get("planilla", ""),
+                "scan_at": r.attrib.get("scan_at", ""),
+            }
+            if serie_key and serie_r and serie_r == serie_key:
+                return item
+            if fallback is None:
+                fallback = item
+        return fallback or {}
+    except Exception:
+        return {}
+
+def _gdx_enrich_winner(fecha_iso: str, w: dict, idx_map: dict) -> dict:
+    figura = _gdx_str((w or {}).get("figura") or (w or {}).get("nombre_figura"))
+    boleto = _norm_tabla_id((w or {}).get("boleto") or (w or {}).get("tabla") or "") if "_norm_tabla_id" in globals() else _gdx_str((w or {}).get("boleto") or (w or {}).get("tabla"))
+    serie = _gdx_str((w or {}).get("serie") or (w or {}).get("serie_archivo"))
+    valor_raw = (w or {}).get("valor")
+    if valor_raw in (None, ""):
+        valor_raw = (w or {}).get("premio")
+    valor_figura = _gdx_safe_float(valor_raw)
+
+    info_b = {}
+    try:
+        info_b = buscar_info_por_boleto(str(fecha_iso), boleto, serie) or {}
+    except Exception:
+        info_b = {}
+    if not info_b:
+        try:
+            info_b = buscar_info_por_boleto(str(fecha_iso), boleto) or {}
+        except Exception:
+            info_b = {}
+
+    qr = _gdx_qr_lookup(str(fecha_iso), serie, boleto) or {}
+
+    nombre_boletin = _gdx_resultado_nombre(str(fecha_iso), figura, boleto)
+    cliente_nombre = _gdx_str(qr.get("cliente_nombre") or nombre_boletin or (w or {}).get("nombre") or (w or {}).get("nota"))
+    vendedor = _gdx_str((w or {}).get("vendedor") or qr.get("vendedor") or info_b.get("vendedor"))
+    planilla = _gdx_str((w or {}).get("planilla") or qr.get("planilla") or info_b.get("planilla"))
+    rango = _gdx_str((w or {}).get("rango") or info_b.get("rango"))
+    sector = _gdx_str(qr.get("sector") or (w or {}).get("sector") or info_b.get("sector"))
+    celular = _gdx_str(qr.get("celular"))
+    scan_at = _gdx_str(qr.get("scan_at"))
+    ultima_bola = _gdx_str((w or {}).get("ultima_bola") or (w or {}).get("numero_ganador"))
+    numero_figura = str(idx_map.get(figura.lower(), "")) if figura else ""
+
+    nombre = cliente_nombre
+    cabala = cliente_nombre
+
+    texto_completo = " | ".join([
+        f"BOLETO {_gdx_dash(boleto)}",
+        f"FIGURA {_gdx_dash(figura)}",
+        f"NRO FIGURA {_gdx_dash(numero_figura)}",
+        f"VALOR ${valor_figura:.2f}",
+        f"VENDEDOR {_gdx_dash(vendedor)}",
+        f"PLANILLA {_gdx_dash(planilla)}",
+        f"RANGO {_gdx_dash(rango)}",
+        f"SECTOR {_gdx_dash(sector)}",
+        f"NOMBRE/CABALA {_gdx_dash(cliente_nombre)}",
+        f"CELULAR {_gdx_dash(celular)}",
+        f"SERIE {_gdx_dash(serie)}",
+        f"SCAN {_gdx_dash(scan_at)}",
+        f"ULTIMA BOLA {_gdx_dash(ultima_bola)}",
+    ])
+
+    return {
+        "numero_figura": numero_figura,
+        "figura": figura,
+        "valor_figura": f"{valor_figura:.2f}",
+        "boleto": boleto,
+        "vendedor": vendedor,
+        "planilla": planilla,
+        "rango": rango,
+        "sector": sector,
+        "nombre": nombre,
+        "cliente_nombre": cliente_nombre,
+        "cabala": cabala,
+        "celular": celular,
+        "serie": serie,
+        "scan_at": scan_at,
+        "ultima_bola": ultima_bola,
+        "texto_completo": texto_completo,
+    }
+
+def _gdx_build_line_rows(row: dict, has_winner: bool) -> list:
+    line_rows = []
+    if not has_winner:
+        line_rows.append({"campo": "estado", "texto": "SIN GANADOR AUN"})
+    for field, label in _GDX_LINE_SPECS:
+        val = _gdx_str((row or {}).get(field))
+        if field == "valor_figura":
+            try:
+                txt = f"${float(val or 0):.2f}"
+            except Exception:
+                txt = "$0.00"
+        elif field in ("boleto", "vendedor", "figura", "ultima_bola"):
+            txt = _gdx_dash(val)
+        elif field == "cabala":
+            txt = f"ESCANEADA: {_gdx_dash(val)}"
+        else:
+            txt = f"{label}: {_gdx_dash(val)}"
+        line_rows.append({"campo": field, "texto": txt})
+    return line_rows
+
+def _gdx_build_root(fecha_iso: str = "") -> ET.Element:
+    fecha_iso = _gdx_str(fecha_iso) or (_get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else date.today().isoformat())
+    idx_map = _gdx_num_fig_map(fecha_iso)
+    raw_winners = _gdx_pick_winners(fecha_iso)
+    rows = []
+    seen = set()
+    for w in (raw_winners or []):
+        if not isinstance(w, dict):
+            continue
+        row = _gdx_enrich_winner(fecha_iso, w, idx_map)
+        key = (row.get("figura", "").lower(), row.get("serie", ""), row.get("boleto", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        if any(_gdx_str(row.get(k)) for k in ("figura", "boleto", "vendedor", "cliente_nombre", "sector")):
+            rows.append(row)
+
+    last = rows[-1] if rows else {f: "" for f in _GDX_FIELDS}
+    if not _gdx_str(last.get("texto_completo")):
+        last["texto_completo"] = "SIN GANADOR AUN"
+
+    line_rows = _gdx_build_line_rows(last, bool(rows))
+    root = ET.Element("ganadores_detalle", {"fecha": str(fecha_iso), "total": str(len(rows))})
+
+    # vMix Table: una sola columna (#text) y varias filas.
+    # Repetimos nodos directos <linea>texto</linea> para que el Data Source
+    # muestre una sola columna con varias filas separadas.
+    for item in line_rows:
+        ET.SubElement(root, "linea").text = _gdx_str(item.get("texto"))
+
+    ultimo = ET.SubElement(root, "ultimo")
+    for f in _GDX_FIELDS:
+        ET.SubElement(ultimo, f).text = _gdx_str(last.get(f))
+
+    detalles = ET.SubElement(root, "detalles")
+    for idx, row in enumerate(rows, start=1):
+        fila_attrs = {"index": str(idx)}
+        for f in _GDX_FIELDS:
+            fila_attrs[f] = _gdx_str(row.get(f))
+        fila = ET.SubElement(detalles, "fila", fila_attrs)
+        for f in _GDX_FIELDS:
+            ET.SubElement(fila, f).text = _gdx_str(row.get(f))
+
+    return root
+
+def _gdx_write_files(root_elem: ET.Element):
+    xml_bytes = ET.tostring(root_elem, encoding="utf-8")
+    for path in [VMIX_GANADORES_DETALLE_XML, VMIX_GANADORES_DETALLE_XML_PUBLIC]:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(b'<?xml version="1.0" encoding="utf-8"?>\n')
+                f.write(xml_bytes)
+        except Exception:
+            pass
+
+def _gdx_response_impl():
+    fecha = _gdx_str(request.args.get("fecha")) or (_get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else date.today().isoformat())
+    root = _gdx_build_root(fecha)
+    try:
+        _gdx_write_files(root)
+    except Exception:
+        pass
+    return _vmix_xml_response(root)
+
+def _gdx_alias_impl():
+    return _gdx_response_impl()
+
+try:
+    app.add_url_rule("/juego/ganadores_detalle.xml", "juego_ganadores_detalle_xml", _gdx_response_impl, methods=["GET"])
+except Exception:
+    pass
+
+try:
+    app.add_url_rule("/juego/xml/ganadores_detalle", "juego_xml_ganadores_detalle", _gdx_alias_impl, methods=["GET"])
+except Exception:
+    pass
+
+# Agrega el link al JSON de enlaces vMix sin romper la ruta existente
+def _gdx_patch_links_json():
+    endpoint_name = None
+    for name in ("juego.juego_vmix_links_json", "juego_vmix_links_json"):
+        if name in app.view_functions:
+            endpoint_name = name
+            break
+    if not endpoint_name:
+        return
+
+    original = app.view_functions.get(endpoint_name)
+    if not callable(original):
+        return
+
+    def _wrapped():
+        resp = original()
+        try:
+            data = resp.get_json(silent=True) if hasattr(resp, "get_json") else None
+        except Exception:
+            data = None
+        if not isinstance(data, dict):
+            return resp
+        try:
+            base = data.get("base_url") or _vmix_base_url()
+        except Exception:
+            base = _vmix_base_url()
+        links = data.get("links") or {}
+        links["ganadores_detalle"] = f"{base}/juego/ganadores_detalle.xml"
+        data["links"] = links
+        new_resp = jsonify(data)
+        for k, v in getattr(resp, "headers", {}).items():
+            if k.lower() not in ("content-length", "content-type"):
+                new_resp.headers[k] = v
+        return new_resp
+
+    app.view_functions[endpoint_name] = _wrapped
+
+try:
+    _gdx_patch_links_json()
+except Exception:
+    pass
+
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
 
 
 
