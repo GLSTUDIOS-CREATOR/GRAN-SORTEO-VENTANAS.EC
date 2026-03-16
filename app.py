@@ -7973,8 +7973,8 @@ VMIX_REINTEGRO_REL    = "vmix_reintegro.xml"
 VMIX_REINTEGROS_REL   = "vmix_reintegros.xml"
 
 # Rutas reales de medios para reintegros (ajustables por variable de entorno)
-REINTEGRO_MEDIA_DIR  = os.getenv("REINTEGRO_MEDIA_DIR",  r"E:\MEDIA\REINTEGRO")
-REINTEGROS_MEDIA_DIR = os.getenv("REINTEGROS_MEDIA_DIR", r"E:\MEDIA\REINTEGROS")
+REINTEGRO_MEDIA_DIR  = os.getenv("REINTEGRO_MEDIA_DIR",  r"D:\PRODUCCIONES\VENTANAS\MEDIA\REINTEGRO")
+REINTEGROS_MEDIA_DIR = os.getenv("REINTEGROS_MEDIA_DIR", r"D:\PRODUCCIONES\VENTANAS\MEDIA\REINTEGROS")
 
 def _reintegro_stem(name: str) -> str:
     base = os.path.basename(str(name or "").strip())
