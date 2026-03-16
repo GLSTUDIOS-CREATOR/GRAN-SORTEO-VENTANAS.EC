@@ -2007,15 +2007,22 @@ async function cargar(){
         bn.textContent = `${code ? ('Código: ' + code + ' · ') : ''}${fact ? (fact + ' · ') : ''}Bonus del día: ${bonusDia.join(' · ')}${actual} · (clic en el dado para lanzar)`;
       }
     }
-
     function _figUiStoreKey(fecha){
       return 'glbingo_fig_ui::' + String(fecha || '');
     }
     function _figUiNormalize(estado){
-      const s = String(estado || '').trim().toUpperCase().replace(/[\u00C1]/g,'A').replace(/[\u00C9]/g,'E').replace(/[\u00CD]/g,'I').replace(/[\u00D3]/g,'O').replace(/[\u00DA]/g,'U').replace(/\s+/g,' ');
+      const s = String(estado || '').trim().toUpperCase().replace(/[Á]/g,'A').replace(/[É]/g,'E').replace(/[Í]/g,'I').replace(/[Ó]/g,'O').replace(/[Ú]/g,'U').replace(/\s+/g,' ');
       if(s === 'SE FUE' || s === 'SE-FUE') return 'SE FUE';
       if(s === 'SE QUEDO' || s === 'SE-QUEDO') return 'SE QUEDO';
       return 'INACTIVO';
+    }
+    function _figUiStateKey(nombre){
+      return String(nombre || '')
+        .trim()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/\s+/g, ' ')
+        .toUpperCase();
     }
     function _figUiRead(fecha){
       try{
@@ -2027,11 +2034,20 @@ async function cargar(){
     function _figUiWrite(fecha, data){
       try{ localStorage.setItem(_figUiStoreKey(fecha), JSON.stringify(data || {})); }catch(_){ }
     }
+    function _figUiGet(fecha, nombre, fallbackEstado){
+      const rawKey = String(nombre || '').trim();
+      if(!rawKey) return _figUiNormalize(fallbackEstado || 'INACTIVO');
+      const data = _figUiRead(fecha);
+      const normKey = _figUiStateKey(rawKey);
+      return _figUiNormalize(data[rawKey] || data[normKey] || fallbackEstado || 'INACTIVO');
+    }
     function _figUiSet(fecha, nombre, estado){
       const key = String(nombre || '').trim();
       if(!key) return;
       const data = _figUiRead(fecha);
-      data[key] = _figUiNormalize(estado);
+      const normalized = _figUiNormalize(estado);
+      data[key] = normalized;
+      data[_figUiStateKey(key)] = normalized;
       _figUiWrite(fecha, data);
     }
     function _figUiClear(fecha){
@@ -2040,16 +2056,25 @@ async function cargar(){
 
 
 // Enviar estado al servidor para actualizar XML/vMix (sin romper UI)
-async function _figUiSendToServer(nombre, estado, valor){
+async function _figUiSendToServer(nombre, estado, valor, fecha){
   try{
-    const payload = { figura: String(nombre||'').trim(), estado: String(estado||'').trim(), valor: valor };
-    if(!payload.figura) return;
-    await fetch('/juego/figura_estado', {
+    const payload = {
+      figura: String(nombre||'').trim(),
+      estado: String(estado||'').trim(),
+      valor: valor,
+      fecha: String(fecha || '').trim()
+    };
+    if(!payload.figura) return true;
+    const resp = await fetch('/juego/figura_estado', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-  }catch(e){ /* no interrumpir */ }
+    return !!resp.ok;
+  }catch(e){
+    console.warn('No se pudo guardar el estado visual de la figura:', e);
+    return false;
+  }
 }
 
     async function loadFiguras(){
@@ -2111,7 +2136,7 @@ async function _figUiSendToServer(nombre, estado, valor){
 
           const nombre = (f.nombre||'').toString().trim();
           const valor = (f.valor!=null ? f.valor : '').toString();
-          const estadoUi = _figUiNormalize(uiStates[nombre] || 'INACTIVO');
+          const estadoUi = _figUiGet(fecha, nombre, (f && f.estado) || 'INACTIVO');
           const isInactivo = (estadoUi === 'INACTIVO');
           const isQuedo = (estadoUi === 'SE QUEDO');
           const isFue = (estadoUi === 'SE FUE');
@@ -2163,17 +2188,17 @@ async function _figUiSendToServer(nombre, estado, valor){
           const [btnIn, btnOk, btnNo] = row.querySelectorAll('button');
           btnIn.addEventListener('click', async ()=>{
             _figUiSet(fecha, nombre, 'INACTIVO');
-            await _figUiSendToServer(nombre, 'INACTIVO', valor);
+            await _figUiSendToServer(nombre, 'INACTIVO', valor, fecha);
             loadFiguras();
           });
 btnOk.addEventListener('click', async ()=>{
             _figUiSet(fecha, nombre, 'SE QUEDO');
-            await _figUiSendToServer(nombre, 'SE QUEDO', valor);
+            await _figUiSendToServer(nombre, 'SE QUEDO', valor, fecha);
             loadFiguras();
           });
 btnNo.addEventListener('click', async ()=>{
             _figUiSet(fecha, nombre, 'SE FUE');
-            await _figUiSendToServer(nombre, 'SE FUE', valor);
+            await _figUiSendToServer(nombre, 'SE FUE', valor, fecha);
             loadFiguras();
           });
 el.appendChild(row);
