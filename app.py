@@ -12764,7 +12764,12 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
                     # Cierre dinámico del MISMO click: si la última figura normal se cerró
                     # justo ahora, la TL programada ya puede salir sin esperar otra bola.
                     closed_fig_keys_now = set(figuras_cerradas_prev)
-                    closed_tl_codes_now = set(tl_codes_closed_prev)
+                    # IMPORTANTE:
+                    #   Las figuras normales sí pueden cerrarse dinámicamente en el MISMO click
+                    #   para permitir que TL1 (LLENA) salga apenas termina la última figura normal.
+                    #   Pero TL2/TL3/TL4 NO deben desbloquearse en ese mismo click por una TL recién caída.
+                    #   Así evitamos que RELLENA aparezca al mismo tiempo que LLENA.
+                    closed_tl_codes_prev_click = set(tl_codes_closed_prev)
                     if not recalc:
                         for _g_now in (ganadores or []):
                             try:
@@ -12773,20 +12778,14 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
                                 _fk_now = ""
                             if _fk_now:
                                 closed_fig_keys_now.add(_fk_now)
-                            try:
-                                _gc_now = str((_g_now or {}).get("fig_code") or code_for((_g_now or {}).get("figura", ""))).strip().upper()
-                            except Exception:
-                                _gc_now = ""
-                            if _gc_now in ("TL1", "TL2", "TL3", "TL4"):
-                                closed_tl_codes_now.add(_gc_now)
 
                     slot_num = int(fig_code[-1]) if fig_code[-1:].isdigit() else 1
                     prev_tl_ok = True
-                    if slot_num >= 2 and "TL1" not in closed_tl_codes_now:
+                    if slot_num >= 2 and "TL1" not in closed_tl_codes_prev_click:
                         prev_tl_ok = False
-                    if slot_num >= 3 and "TL2" not in closed_tl_codes_now:
+                    if slot_num >= 3 and "TL2" not in closed_tl_codes_prev_click:
                         prev_tl_ok = False
-                    if slot_num >= 4 and "TL3" not in closed_tl_codes_now:
+                    if slot_num >= 4 and "TL3" not in closed_tl_codes_prev_click:
                         prev_tl_ok = False
 
                     all_non_tl_closed_now = non_tl_fig_keys.issubset(closed_fig_keys_now)
