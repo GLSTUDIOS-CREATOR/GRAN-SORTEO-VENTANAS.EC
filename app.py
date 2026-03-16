@@ -7972,9 +7972,12 @@ STD_SPINNERS_REL      = "spinners.xml"                # Fallback para Juego
 VMIX_REINTEGRO_REL    = "vmix_reintegro.xml"
 VMIX_REINTEGROS_REL   = "vmix_reintegros.xml"
 
-# Rutas reales de medios para reintegros (ajustables por variable de entorno)
-REINTEGRO_MEDIA_DIR  = os.getenv("REINTEGRO_MEDIA_DIR",  r"D:\PRODUCCIONES\VENTANAS\MEDIA\REINTEGRO")
-REINTEGROS_MEDIA_DIR = os.getenv("REINTEGROS_MEDIA_DIR", r"D:\PRODUCCIONES\VENTANAS\MEDIA\REINTEGROS")
+# Ruta base de medios local (ajustable por variable de entorno)
+VMIX_MEDIA_ROOT = (os.getenv("VMIX_MEDIA_ROOT") or r"D:\PRODUCCIONES\VENTANAS\MEDIA").strip().rstrip("\\/")
+
+# Rutas reales de medios para reintegros (heredan de VMIX_MEDIA_ROOT si no defines variables individuales)
+REINTEGRO_MEDIA_DIR  = (os.getenv("REINTEGRO_MEDIA_DIR")  or os.path.join(VMIX_MEDIA_ROOT, "REINTEGRO")).strip()
+REINTEGROS_MEDIA_DIR = (os.getenv("REINTEGROS_MEDIA_DIR") or os.path.join(VMIX_MEDIA_ROOT, "REINTEGROS")).strip()
 
 def _reintegro_stem(name: str) -> str:
     base = os.path.basename(str(name or "").strip())
@@ -8545,7 +8548,7 @@ def write_vmix_figuras_dia_resumen(fecha, figuras_dia, catalogo):
 # ======================== Panel 5xN para vMix (figura base + overlay de estado) ========================
 VMIX_FIG_PANEL_REL = "vmix_figuras_panel.xml"
 XML_FIG_PANEL_REL  = "xml_figuras_panel.xml"
-VMIX_ESTADOS_BASE  = (os.getenv("VMIX_ESTADOS_BASE") or r"E:\MEDIA\ESTADOS").strip() or r"E:\MEDIA\ESTADOS"
+VMIX_ESTADOS_BASE  = (os.getenv("VMIX_ESTADOS_BASE") or os.path.join(VMIX_MEDIA_ROOT, "ESTADOS")).strip() or os.path.join(VMIX_MEDIA_ROOT, "ESTADOS")
 
 def _panel_name_display(nombre: str) -> str:
     return _tl_semantic_name(str(nombre or ""), code_for(str(nombre or "")))
@@ -11228,7 +11231,7 @@ DB_DIR = DB_DIR_PERSIST
 BINGO_XML     = os.path.join(DB_DIR, "datos_bingo.xml")
 HIST_JSON     = os.path.join(DB_DIR, "historial.json")
 VMIX_NUMEROS_XML = os.path.join(DB_DIR, "vmix_numeros.xml")
-VMIX_NUMEROS_MEDIA_DIR = os.getenv("VMIX_NUMEROS_MEDIA_DIR", r"E:\MEDIA\NUMEROS")
+VMIX_NUMEROS_MEDIA_DIR = (os.getenv("VMIX_NUMEROS_MEDIA_DIR") or os.path.join(VMIX_MEDIA_ROOT, "NUMEROS")).strip()
 VMIX_NUMEROS_INACTIVA_FILE = os.getenv("VMIX_NUMEROS_INACTIVA_FILE", "INACTIVA")
 
 # Spinners (VMIX overlay + fallback XML)
