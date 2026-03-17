@@ -9293,6 +9293,12 @@ def _sorteo_build_defaults(fecha):
         "boletos_no_vendidos_qr_actualizado": "",
         "tl_programadas_activas": "0",
         "tl_programadas_cartones": "",
+        "tl_programada_llena": "",
+        "tl_programada_rellena": "",
+        "tl_programada_yapa": "",
+        "tl_objetivo_llena": "",
+        "tl_objetivo_rellena": "",
+        "tl_objetivo_yapa": "",
     }
 
 def _sorteo_read_config(fecha):
@@ -9333,6 +9339,9 @@ def _sorteo_read_config(fecha):
                 cfg["tl_programadas_activas"] = tl.attrib.get("tl_programadas_activas")
             if tl.attrib.get("tl_programadas_cartones") not in (None, ""):
                 cfg["tl_programadas_cartones"] = tl.attrib.get("tl_programadas_cartones")
+            for k in ("tl_programada_llena", "tl_programada_rellena", "tl_programada_yapa", "tl_objetivo_llena", "tl_objetivo_rellena", "tl_objetivo_yapa"):
+                if tl.attrib.get(k) not in (None, ""):
+                    cfg[k] = tl.attrib.get(k)
 
         sp = d.find("spinners")
         if sp is not None:
@@ -9419,6 +9428,12 @@ def _sorteo_save_config(fecha, payload, *, activar=False, finalizar=False):
         if payload.get("tl_programadas_cartones") not in (None, "")
         else tln.attrib.get("tl_programadas_cartones", defaults.get("tl_programadas_cartones", ""))
     ).strip()
+    for _k in ("tl_programada_llena", "tl_programada_rellena", "tl_programada_yapa", "tl_objetivo_llena", "tl_objetivo_rellena", "tl_objetivo_yapa"):
+        tln.attrib[_k] = str(
+            payload.get(_k)
+            if payload.get(_k) not in (None, "")
+            else tln.attrib.get(_k, defaults.get(_k, ""))
+        ).strip()
 
     # figuras snapshot (resto)
     figs = _node(dia, "figuras")
@@ -9534,6 +9549,12 @@ def sorteo():
         boletos_no_vendidos_qr_actualizado=cfg.get("boletos_no_vendidos_qr_actualizado") or "",
         tl_programadas_activas=cfg.get("tl_programadas_activas") or "0",
         tl_programadas_cartones=cfg.get("tl_programadas_cartones") or "",
+        tl_programada_llena=cfg.get("tl_programada_llena") or "",
+        tl_programada_rellena=cfg.get("tl_programada_rellena") or "",
+        tl_programada_yapa=cfg.get("tl_programada_yapa") or "",
+        tl_objetivo_llena=cfg.get("tl_objetivo_llena") or "",
+        tl_objetivo_rellena=cfg.get("tl_objetivo_rellena") or "",
+        tl_objetivo_yapa=cfg.get("tl_objetivo_yapa") or "",
     )
 
 @app.route("/api/vendedor-por-boleto", methods=["GET","POST"])
@@ -9686,6 +9707,12 @@ def sorteo_activar():
         "tl1": _fmt_int(tl[0]), "tl2": _fmt_int(tl[1]), "tl3": _fmt_int(tl[2]), "tl4": _fmt_int(tl[3]),
         "tl_programadas_activas": base_cfg.get("tl_programadas_activas", prev.get("tl_programadas_activas", "0") if isinstance(prev, dict) else "0"),
         "tl_programadas_cartones": base_cfg.get("tl_programadas_cartones", prev.get("tl_programadas_cartones", "") if isinstance(prev, dict) else ""),
+        "tl_programada_llena": base_cfg.get("tl_programada_llena", prev.get("tl_programada_llena", "") if isinstance(prev, dict) else ""),
+        "tl_programada_rellena": base_cfg.get("tl_programada_rellena", prev.get("tl_programada_rellena", "") if isinstance(prev, dict) else ""),
+        "tl_programada_yapa": base_cfg.get("tl_programada_yapa", prev.get("tl_programada_yapa", "") if isinstance(prev, dict) else ""),
+        "tl_objetivo_llena": base_cfg.get("tl_objetivo_llena", prev.get("tl_objetivo_llena", "") if isinstance(prev, dict) else ""),
+        "tl_objetivo_rellena": base_cfg.get("tl_objetivo_rellena", prev.get("tl_objetivo_rellena", "") if isinstance(prev, dict) else ""),
+        "tl_objetivo_yapa": base_cfg.get("tl_objetivo_yapa", prev.get("tl_objetivo_yapa", "") if isinstance(prev, dict) else ""),
         "spinners": spins if isinstance(spins, list) else [],
         "premios_a_pagar_cantidad": base_cfg.get("premios_a_pagar_cantidad", 0),
         "premios_a_pagar_monto": base_cfg.get("premios_a_pagar_monto", 0),
@@ -12137,6 +12164,42 @@ def _tl_prog_parse_cartones(raw) -> list:
     return out
 
 
+def _tl_prog_parse_int(v, default=0) -> int:
+    try:
+        s = str(v or "").strip()
+    except Exception:
+        s = ""
+    if not s:
+        return int(default)
+    m = re.search(r"\d+", s)
+    if not m:
+        return int(default)
+    try:
+        return int(m.group(0))
+    except Exception:
+        return int(default)
+
+
+def _tl_prog_semantic_code(code: str) -> str:
+    raw = str(code or "").strip().upper()
+    return {"TL1": "LLEN", "TL2": "RELL", "TL3": "YAPA", "TL4": "COMP"}.get(raw, raw)
+
+
+def _tl_prog_build_slots(cfg: dict) -> dict:
+    cfg = cfg or {}
+    slots = {
+        "TL1": {"carton": _tl_prog_norm_carton(cfg.get("tl_programada_llena")), "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_llena"), 0)},
+        "TL2": {"carton": _tl_prog_norm_carton(cfg.get("tl_programada_rellena")), "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_rellena"), 0)},
+        "TL3": {"carton": _tl_prog_norm_carton(cfg.get("tl_programada_yapa")), "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_yapa"), 0)},
+        "TL4": {"carton": _tl_prog_norm_carton(cfg.get("tl_programadas_super_yapa")), "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_super_yapa"), 0)},
+    }
+    legacy = _tl_prog_parse_cartones(cfg.get("tl_programadas_cartones"))
+    for i, carton in enumerate(legacy[:4], start=1):
+        slot = f"TL{i}"
+        if not slots[slot]["carton"]:
+            slots[slot]["carton"] = _tl_prog_norm_carton(carton)
+    return {k: v for k, v in slots.items() if v.get("carton")}
+
 def _tl_prog_band_bounds(col_idx: int):
     bands = [(1,15), (16,30), (31,45), (46,60), (61,75)]
     try:
@@ -12163,21 +12226,16 @@ def _tl_prog_col_for_num(n: int) -> int:
     return -1
 
 
-def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0):
+def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0, required_pos=None, force_ultimo=False):
     """
-    Construye una grilla sintética para TL programadas:
-    - conserva números del cartón que ya salieron,
-    - reemplaza los NO salidos por números ya salidos,
-    - respeta la banda B/I/N/G/O por columna,
-    - no duplica números,
-    - fuerza la última balota dentro de su columna para que se vea azul.
+    Ajusta solo lo necesario del cartón programado usando números YA marcados.
+    - Conserva números del cartón que ya están marcados.
+    - Solo reemplaza casillas requeridas que aún no han salido.
+    - Respeta bandas B/I/N/G/O por columna.
+    - No altera el historial de balotas.
 
     Devuelve:
-      (grid_forzada, numeros_figura_en_orden, marcados_nums_forzados, completa)
-
-    completa=True solo cuando TODAS las casillas numéricas quedaron cubiertas con
-    números que ya salieron. Si alguna casilla no pudo reemplazarse por falta de
-    números marcados en su banda, NO debe premiarse todavía.
+      (grid_forzada, numeros_figura, marcados_nums_en_grid, completa)
     """
     grid = []
     for row in (original_grid or []):
@@ -12191,7 +12249,6 @@ def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0):
         while len(grid[r]) < 5:
             grid[r].append("")
 
-    # pila marcada, en orden, sin duplicados
     marked_seq = []
     seen_seq = set()
     for x in (marked_stack or []):
@@ -12210,53 +12267,62 @@ def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0):
         ultimo = 0
     ultimo_col = _tl_prog_col_for_num(ultimo) if ultimo else -1
 
-    used = set()
-    forced_marked = set()
-    replace_cells = {0: [], 1: [], 2: [], 3: [], 4: []}
-    ultimo_present = False
+    target_positions = []
+    if required_pos:
+        for pos in (required_pos or []):
+            try:
+                rr = int(pos[0]); cc = int(pos[1])
+            except Exception:
+                continue
+            if 0 <= rr < 5 and 0 <= cc < 5:
+                target_positions.append((rr, cc))
+    else:
+        for rr in range(5):
+            for cc in range(5):
+                if not _is_free_cell(grid[rr][cc]):
+                    target_positions.append((rr, cc))
 
-    # 1) conservamos los números ya marcados; los demás van a reemplazo
+    target_set = set(target_positions)
+    used = set()
+    replace_cells = {0: [], 1: [], 2: [], 3: [], 4: []}
+
     for r in range(5):
         for c in range(5):
             v = str(grid[r][c]).strip()
             if _is_free_cell(v):
                 continue
             if v.isdigit() and int(v) in marked_set:
-                n = int(v)
-                used.add(n)
-                forced_marked.add(n)
-                if ultimo and n == ultimo:
-                    ultimo_present = True
-            else:
-                replace_cells[c].append((r, c))
+                used.add(int(v))
+            if (r, c) not in target_set:
+                continue
+            if v.isdigit() and int(v) in marked_set:
+                continue
+            replace_cells[c].append((r, c))
 
-    # 2) si la última balota no está en la grilla, la forzamos en su columna
-    if ultimo and ultimo_col >= 0 and not ultimo_present:
-        target_cell = None
-        if replace_cells.get(ultimo_col):
-            target_cell = replace_cells[ultimo_col].pop(0)
-        else:
-            # si no hay huecos, sobreescribe la última celda NO libre de esa columna
-            for r in range(4, -1, -1):
-                v = str(grid[r][ultimo_col]).strip()
-                if _is_free_cell(v):
-                    continue
-                target_cell = (r, ultimo_col)
+    if force_ultimo and ultimo and ultimo_col >= 0:
+        ultimo_present = False
+        for rr, cc in target_positions:
+            v = str(grid[rr][cc]).strip()
+            if v.isdigit() and int(v) == ultimo:
+                ultimo_present = True
                 break
-        if target_cell is not None:
-            rr, cc = target_cell
-            old_v = str(grid[rr][cc]).strip()
-            if old_v.isdigit():
-                old_n = int(old_v)
-                if old_n in used:
-                    used.discard(old_n)
-                    forced_marked.discard(old_n)
-            grid[rr][cc] = str(ultimo)
-            used.add(ultimo)
-            forced_marked.add(ultimo)
-            ultimo_present = True
+        if not ultimo_present:
+            target_cell = None
+            if replace_cells.get(ultimo_col):
+                target_cell = replace_cells[ultimo_col].pop(0)
+            else:
+                for rr, cc in reversed(target_positions):
+                    if cc == ultimo_col and not _is_free_cell(grid[rr][cc]):
+                        target_cell = (rr, cc)
+                        break
+            if target_cell is not None:
+                rr, cc = target_cell
+                old_v = str(grid[rr][cc]).strip()
+                if old_v.isdigit() and int(old_v) in used:
+                    used.discard(int(old_v))
+                grid[rr][cc] = str(ultimo)
+                used.add(ultimo)
 
-    # 3) rellena por columna respetando banda B/I/N/G/O
     pendientes = []
     for c in range(5):
         lo, hi = _tl_prog_band_bounds(c)
@@ -12268,28 +12334,39 @@ def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0):
             n = pool.pop(0)
             grid[rr][cc] = str(n)
             used.add(n)
-            forced_marked.add(n)
 
-    # 4) salida en orden visual (fila por fila)
     numeros_figura = []
-    for r in range(5):
-        for c in range(5):
-            v = str(grid[r][c]).strip()
-            if _is_free_cell(v):
-                continue
-            if v.isdigit():
-                numeros_figura.append(int(v))
+    completa = True
+    for rr, cc in target_positions:
+        v = str(grid[rr][cc]).strip()
+        if _is_free_cell(v):
+            continue
+        if not (v.isdigit() and int(v) in marked_set):
+            completa = False
+        if v.isdigit():
+            numeros_figura.append(int(v))
 
-    completa = (len(pendientes) == 0)
-    # Si no está completa, NO fingimos que las casillas pendientes ya están marcadas.
-    return grid, numeros_figura, sorted(int(x) for x in forced_marked), completa
+    marcados_en_grid = []
+    seen_grid = set()
+    for rr in range(5):
+        for cc in range(5):
+            v = str(grid[rr][cc]).strip()
+            if v.isdigit():
+                n = int(v)
+                if n in marked_set and n not in seen_grid:
+                    seen_grid.add(n)
+                    marcados_en_grid.append(n)
+
+    if pendientes:
+        completa = False
+    return grid, numeros_figura, sorted(marcados_en_grid), completa
 
 def _resolve_tl_programadas_for_day(fecha_iso: str, by_series: dict) -> dict:
     """
     Resuelve TL1..TL4 programadas a un cartón real del día.
-    - Si el número existe, usa ese cartón exacto.
-    - Si no existe, lo ajusta al más cercano (primero/último si queda fuera de rango).
-    Devuelve: {"TL1": {"serie": ..., "carton_id": ...}, ...}
+    Usa primero los campos explícitos por etapa y mantiene compatibilidad con
+    tl_programadas_cartones legado.
+    Devuelve: {"TL1": {"serie": ..., "carton_id": ..., "objetivo": ...}, ...}
     """
     try:
         cfg = _sorteo_read_config(str(fecha_iso))
@@ -12299,7 +12376,7 @@ def _resolve_tl_programadas_for_day(fecha_iso: str, by_series: dict) -> dict:
     if not _tl_prog_on((cfg or {}).get("tl_programadas_activas")):
         return {}
 
-    solicitados = _tl_prog_parse_cartones((cfg or {}).get("tl_programadas_cartones"))[:4]
+    solicitados = _tl_prog_build_slots(cfg)
     if not solicitados:
         return {}
 
@@ -12364,19 +12441,18 @@ def _resolve_tl_programadas_for_day(fecha_iso: str, by_series: dict) -> dict:
         return {}
 
     resolved = {}
-    for idx, req in enumerate(solicitados, start=1):
-        slot = f"TL{idx}"
-        req_norm = _tl_prog_norm_carton(req)
+    for slot, req in solicitados.items():
+        req_norm = _tl_prog_norm_carton(req.get("carton"))
+        if not req_norm:
+            continue
 
         chosen = None
-        # 1) exacto por id normalizado
         for info in series_info:
             real = info["norm_to_real"].get(req_norm)
             if real:
                 chosen = {"serie": info["serie"], "carton_id": real}
                 break
 
-        # 2) si no existe, el más cercano (o el primero si no es numérico)
         if chosen is None:
             req_num = int(req_norm) if req_norm.isdigit() else None
             best = None
@@ -12393,6 +12469,8 @@ def _resolve_tl_programadas_for_day(fecha_iso: str, by_series: dict) -> dict:
                 chosen = {"serie": info["serie"], "carton_id": info["valid_ids"][0]}
 
         if chosen:
+            chosen["objetivo"] = max(0, _tl_prog_parse_int(req.get("objetivo"), 0))
+            chosen["carton_solicitado"] = req_norm
             resolved[slot] = chosen
 
     return resolved
@@ -12695,14 +12773,9 @@ def _clear_juego_caches():
 
 def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc: bool = False):
     """
-    Detecta ganadores reales (OPTIMIZADO):
-      - Solo tablas dentro de rangos impresos (boletos) del día.
-      - Solo figuras del día (figuras_por_fecha.xml).
-      - En modo normal (recalc=False): SOLO revisa tablas que contienen el ÚLTIMO número marcado
-        y SOLO figuras donde ese último número es parte de la figura (esto acelera muchísimo).
-      - En modo recalc=True: recalcula todo (para reversa/reset) y revisa todas las tablas/figuras.
+    Detecta ganadores reales respetando la estructura actual de lectura y, además,
+    permite LLENA/RELLENA/YAPA programadas sin alterar el historial de balotas.
     """
-    # normaliza marcados
     marked_nums = set()
     for x in (stack or []):
         try:
@@ -12711,17 +12784,15 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
                 marked_nums.add(xi)
         except Exception:
             pass
+    marked_count = len(marked_nums)
 
-    # estado (para no repetir)
     state = _safe_json_read(GANADORES_STATE_JSON) or {}
     known = set(state.get("keys") or [])
     if recalc:
         known = set()
 
-    # ganadores existentes
     allj = _safe_json_read(GANADORES_JSON) or {}
     ganadores = allj.get(str(fecha_iso), []) if not recalc else []
-    # Dedupe + protege contra duplicados aunque se haya perdido ganadores_state.json
     ganadores = _dedupe_ganadores(str(fecha_iso), ganadores)
     for _g in (ganadores or []):
         try:
@@ -12735,43 +12806,40 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
             t = str(v or "").strip().lower()
         except Exception:
             t = ""
-        t = re.sub(r"\s+", " ", t)
-        return t
+        return re.sub(r"\s+", " ", t)
 
-    # Figuras que ya tuvieron ganador en bolas anteriores (se cierran para próximos clicks)
+    def _semantic_stage(code: str) -> str:
+        raw = str(code or "").strip().upper()
+        return {"TL1": "LLEN", "TL2": "RELL", "TL3": "YAPA", "TL4": "COMP"}.get(raw, raw)
+
+    def _stage_order(code: str) -> int:
+        return {"LLEN": 1, "TL1": 1, "RELL": 2, "TL2": 2, "YAPA": 3, "TL3": 3, "COMP": 4, "TL4": 4}.get(str(code or "").strip().upper(), 0)
+
     figuras_cerradas_prev = set()
     tl_codes_closed_prev = set()
+    semantic_closed_prev = set()
     if not recalc:
         for g in (ganadores or []):
             fk = _norm_fig_name((g or {}).get("figura") or (g or {}).get("nombre_figura") or "")
             if fk:
                 figuras_cerradas_prev.add(fk)
-            try:
-                gc = str((g or {}).get("fig_code") or "").strip().upper()
-                if gc in ("TL1", "TL2", "TL3", "TL4"):
-                    tl_codes_closed_prev.add(gc)
-            except Exception:
-                pass
+            gc = str((g or {}).get("fig_code") or "").strip().upper()
+            if gc in ("TL1", "TL2", "TL3", "TL4"):
+                tl_codes_closed_prev.add(gc)
+            sc = _semantic_stage(gc or code_for((g or {}).get("figura", "")))
+            if sc in ("LLEN", "RELL", "YAPA", "COMP"):
+                semantic_closed_prev.add(sc)
 
-    # figuras del día
     figuras = _load_figuras_por_fecha(fecha_iso)
     if not figuras:
         return ganadores, nuevos, sorted(known)
 
-    # configuración del sorteo (para inyectar TL1..TL4 aunque no estén en figuras_por_fecha.xml)
     try:
         sorteo_cfg = _sorteo_read_config(str(fecha_iso)) or {}
     except Exception:
         sorteo_cfg = {}
+    tl_slots_cfg = _tl_prog_build_slots(sorteo_cfg) if _tl_prog_on((sorteo_cfg or {}).get("tl_programadas_activas")) else {}
 
-    tl_prog_slots = 0
-    try:
-        if _tl_prog_on((sorteo_cfg or {}).get("tl_programadas_activas")):
-            tl_prog_slots = min(4, len(_tl_prog_parse_cartones((sorteo_cfg or {}).get("tl_programadas_cartones"))))
-    except Exception:
-        tl_prog_slots = 0
-
-    # estados de figuras (INACTIVO = no se juega)
     fig_states = {}
     if "FIG_ESTADOS_JSON" in globals():
         try:
@@ -12779,45 +12847,24 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
         except Exception:
             fig_states = {}
 
-    # catálogo patrones
     catalogo = _load_catalogo_figuras_any()
-
-    # precompute patrones activos
-    # IMPORTANTE:
-    #   - Conservamos los códigos internos TL1..TL4 para la lógica.
-    #   - Pero mostramos / guardamos semánticamente:
-    #       TL1 -> LLENA
-    #       TL2 -> RELLENA
-    #       TL3 -> YAPA
-    #       TL4 -> SUPER YAPA
-    #   Así no aparece como "TABLA LLENA 1/2/3" en el ganador ni en resultados.
     patrones = []
-    _TL_DISPLAY_NAME = {
-        "TL1": "LLENA",
-        "TL2": "RELLENA",
-        "TL3": "YAPA",
-        "TL4": "SUPER YAPA",
-    }
+    _TL_DISPLAY_NAME = {"TL1": "LLENA", "TL2": "RELLENA", "TL3": "YAPA", "TL4": "SUPER YAPA"}
     for it in figuras:
         nombre_src = it.get("nombre", "")
         if not nombre_src:
             continue
         estado = str(fig_states.get(nombre_src, "") or "").strip().upper()
         estado = re.sub(r"\s+", " ", estado)
-        # Estado visual para boletín/XML: no bloquea la lectura del juego.
-        # Solo filtramos estados raros/no esperados para no dañar la lógica.
         if estado and estado not in ("ACTIVO", "INACTIVO", "SE FUE", "SE QUEDO"):
             continue
-
         code = globals().get("code_for")(nombre_src) if callable(globals().get("code_for")) else re.sub(r"[^A-Z0-9]", "", nombre_src.upper())[:4] or "FIG"
         nombre = _tl_semantic_name(nombre_src, code)
         required_pos, cmap = _required_positions_for_fig(code, catalogo)
-
         if not required_pos and not (code in ("TL1", "TL2", "TL3", "TL4")):
             any_on = any(v not in ("#FFFFFF", (globals().get("COLOR_OFF") or "#E8E8E8").upper(), "#E8E8E8") for v in (cmap.values() or []))
             if not any_on:
                 continue
-
         patrones.append({
             "nombre": nombre,
             "fig_key": _norm_fig_name(nombre),
@@ -12827,48 +12874,35 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
             "color_map_pos": cmap
         })
 
-    # Inyecta TL1..TL4 desde la configuración del sorteo aunque no existan como <fig> en figuras_por_fecha.xml.
-    # Esto permite que las TL manuales/programadas sí participen en el juego sin tocar el catálogo.
     codes_present = {str(p.get("code") or "").strip().upper() for p in (patrones or [])}
-    for _slot in range(1, 5):
-        _code = f"TL{_slot}"
-        if _code in codes_present:
+    for _slot, _slot_cfg in (tl_slots_cfg or {}).items():
+        if _slot in codes_present:
             continue
+        slot_num = int(_slot[-1]) if _slot[-1:].isdigit() else 0
         try:
-            _valor_tl = float(str((sorteo_cfg or {}).get(f"tl{_slot}") or "0").replace(",", "."))
+            _valor_tl = float(str((sorteo_cfg or {}).get(f"tl{slot_num}") or "0").replace(",", "."))
         except Exception:
             _valor_tl = 0.0
-        # IMPORTANTE:
-        #   El valor tl1/tl2/tl3/tl4 solo define el PREMIO configurado.
-        #   NO debe inyectar una "tabla programada" por sí solo.
-        #   Solo jugamos TL1..TL4 cuando realmente están programadas/activas.
-        _debe_jugar = (_slot <= int(tl_prog_slots or 0))
-        if not _debe_jugar:
-            continue
-        _req_tl, _cmap_tl = _required_positions_for_fig(_code, catalogo)
-        _nombre_tl = f"TABLA LLENA {_slot}"
+        _req_tl, _cmap_tl = _required_positions_for_fig(_slot, catalogo)
         patrones.append({
-            "nombre": _nombre_tl,
-            "fig_key": _norm_fig_name(_nombre_tl),
-            "code": _code,
+            "nombre": _TL_DISPLAY_NAME.get(_slot, _slot),
+            "fig_key": _norm_fig_name(_TL_DISPLAY_NAME.get(_slot, _slot)),
+            "code": _slot,
             "valor": round(max(_valor_tl, 0.0), 2),
             "required_pos": _req_tl,
             "color_map_pos": _cmap_tl,
         })
-        codes_present.add(_code)
 
     if not patrones:
         return ganadores, nuevos, sorted(known)
 
-    non_tl_fig_keys = {
+    full_stage_codes = {"LLEN", "RELL", "YAPA", "COMP"}
+    tl_stage_codes = {"TL1", "TL2", "TL3", "TL4"}
+    figuras_base_keys = {
         p.get("fig_key") for p in (patrones or [])
-        if p.get("fig_key") and p.get("code") not in ("TL1", "TL2", "TL3", "TL4")
+        if p.get("fig_key") and p.get("code") not in tl_stage_codes and p.get("code") not in full_stage_codes
     }
-    all_non_tl_closed_prev = non_tl_fig_keys.issubset(figuras_cerradas_prev)
 
-    # Evita que LLENA / RELLENA / COMPLETA se premien sobre la MISMA tabla.
-    # LLENA podrá salir primero y RELLENA después, pero en otra tabla.
-    full_table_family_codes = {"LLEN", "RELL", "COMP"}
     full_table_claimed_prev = set()
     if not recalc:
         for _g in (ganadores or []):
@@ -12876,12 +12910,11 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
                 _gc = str((_g or {}).get("fig_code") or code_for((_g or {}).get("figura", ""))).strip().upper()
             except Exception:
                 _gc = ""
-            if _gc in full_table_family_codes:
+            if _semantic_stage(_gc) in {"LLEN", "RELL", "COMP"}:
                 _tb = _norm_tabla_id((_g or {}).get("tabla", ""))
                 if _tb:
                     full_table_claimed_prev.add(_tb)
 
-    # rangos impresos (tablas en juego)
     rangos = _get_rangos_en_juego(fecha_iso)
     if not rangos:
         return ganadores, nuevos, sorted(known)
@@ -12892,38 +12925,41 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
 
     tl_programadas_map = _resolve_tl_programadas_for_day(str(fecha_iso), by_series)
 
-    # Si hay TL programadas activas, esas semánticas dejan de jugar como figuras normales.
-    # Así la prioridad queda:
-    #   TL1 (LLENA programada) -> antes que LLENA normal
-    #   TL2 (RELLENA programada) -> después de TL1
-    #   TL3 (YAPA programada) -> después de TL2
-    #   TL4 (SUPER YAPA / COMPLETA programada) -> después de TL3
-    _TL_NORMAL_CODE = {"TL1": "LLEN", "TL2": "RELL", "TL3": "YAPA", "TL4": "COMP"}
-    _normal_codes_bloqueados = {
-        _TL_NORMAL_CODE.get(_slot)
-        for _slot in (tl_programadas_map or {}).keys()
-        if _TL_NORMAL_CODE.get(_slot)
-    }
-    if _normal_codes_bloqueados:
-        # Si existe una TL programada activa, la versión semántica normal
-        # (LLENA / RELLENA / YAPA / COMPLETA) NO debe jugar ese mismo día,
-        # porque el premio lo debe resolver únicamente la programada.
-        patrones = [
-            p for p in (patrones or [])
-            if p.get("code") not in _normal_codes_bloqueados
-        ]
-        non_tl_fig_keys = {
-            p.get("fig_key") for p in (patrones or [])
-            if p.get("fig_key")
-            and p.get("code") not in ("TL1", "TL2", "TL3", "TL4")
-            and p.get("code") not in _normal_codes_bloqueados
-        }
-
-    # normaliza último marcado (solo en modo normal)
     try:
         ultimo = int(ultimo_marcado) if ultimo_marcado else 0
     except Exception:
         ultimo = 0
+
+    non_tl_patterns = [p for p in patrones if p.get("code") not in tl_stage_codes]
+    tl_patterns = [p for p in patrones if p.get("code") in tl_stage_codes]
+
+    natural_stage_hits_now = set()
+
+    def _make_win(pat, serie_archivo, carton_id_raw, carton_id_norm, grid_out, marked_out, nums_fig_out):
+        numero_ganador = ultimo if ultimo else (nums_fig_out[-1] if nums_fig_out else "")
+        info_b = buscar_info_por_boleto(str(fecha_iso), carton_id_raw, serie_archivo)
+        vendedor_b = (info_b.get("vendedor") or "").strip()
+        planilla_b = (info_b.get("planilla") or "").strip()
+        rango_b = (info_b.get("rango") or "").strip()
+        return {
+            "fecha": str(fecha_iso),
+            "figura": pat["nombre"],
+            "fig_code": pat["code"],
+            "valor": round(float(pat["valor"]), 2),
+            "serie": serie_archivo,
+            "vendedor": vendedor_b,
+            "planilla": planilla_b,
+            "rango": rango_b,
+            "sector": (planilla_b or rango_b),
+            "tabla": carton_id_norm,
+            "ultima_bola": int(ultimo) if ultimo else "",
+            "numero_ganador": int(numero_ganador) if str(numero_ganador).isdigit() else str(numero_ganador),
+            "numeros_figura": nums_fig_out,
+            "grid": grid_out,
+            "required_pos": pat["required_pos"],
+            "color_map_pos": pat["color_map_pos"],
+            "marcados_nums": marked_out,
+        }
 
     for serie_archivo, spans in by_series.items():
         try:
@@ -12933,7 +12969,6 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
         if df is None or df.empty:
             continue
 
-        # convierte spans a intervalos [s,e)
         intervals = []
         for desde, hasta in spans:
             if desde not in id_to_idx or hasta not in id_to_idx:
@@ -12946,7 +12981,6 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
         if not intervals:
             continue
 
-        # merge intervals
         intervals.sort()
         merged = []
         for s, e in intervals:
@@ -12955,28 +12989,22 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
             else:
                 merged[-1][1] = max(merged[-1][1], e)
 
-        # indexa tablas una sola vez por (fecha, serie, rango, mtime)
         tickets, by_num = _get_cartones_index_cached(str(fecha_iso), str(serie_archivo), merged, df, id_col, mtime)
-
-        # MODO NORMAL: solo tablas que contienen el último número
         if (not recalc) and (1 <= ultimo <= 75):
             cand_idxs = list(by_num.get(ultimo, []))
         else:
             cand_idxs = list(range(len(tickets)))
 
-        # Si hay TL programadas para esta serie, forzamos a revisar ese/eses cartones
-        # aunque la última bola no pertenezca a ellos (para que la TL "caiga" al programado).
+        idx_by_carton = {}
+        for _i, _t in enumerate(tickets):
+            idx_by_carton[_tl_prog_norm_carton(_t.get("carton_id", ""))] = _i
         if (not recalc) and tl_programadas_map:
-            idx_by_carton = {}
-            for _i, _t in enumerate(tickets):
-                idx_by_carton[_tl_prog_norm_carton(_t.get("carton_id", ""))] = _i
             for slot, target in (tl_programadas_map or {}).items():
                 if str(target.get("serie") or "") != str(serie_archivo):
                     continue
                 _ix = idx_by_carton.get(_tl_prog_norm_carton(target.get("carton_id", "")))
                 if _ix is not None and _ix not in cand_idxs:
                     cand_idxs.append(_ix)
-
         if not cand_idxs:
             continue
 
@@ -12987,155 +13015,129 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
             carton_id = t.get("carton_id", "")
             grid = t.get("grid")
             pos_map = t.get("pos_map") or {}
-
-            for pat in patrones:
-                # Si la figura ya tuvo ganador en una bola anterior, ya no participa más.
+            carton_id_norm = _norm_tabla_id(carton_id)
+            for pat in non_tl_patterns:
                 if (not recalc) and pat.get("fig_key") and pat.get("fig_key") in figuras_cerradas_prev:
                     continue
-
                 fig_code = pat["code"]
-                carton_id_norm = _norm_tabla_id(carton_id)
                 key = f"{fecha_iso}|{fig_code}|{serie_archivo}|{carton_id_norm}"
                 if key in known:
                     continue
 
-                # Si existe una TL programada para esta semántica, la figura normal queda bloqueada
-                # hasta que la TL correspondiente ya haya caído. Esto evita que LLENA/RELLENA normales
-                # se adelanten a TABLA LLENA 1/2/3/4.
-                _slot_requerido = None
-                if fig_code == "LLEN" and "TL1" in (tl_programadas_map or {}):
-                    _slot_requerido = "TL1"
-                elif fig_code == "RELL" and "TL2" in (tl_programadas_map or {}):
-                    _slot_requerido = "TL2"
-                elif fig_code == "YAPA" and "TL3" in (tl_programadas_map or {}):
-                    _slot_requerido = "TL3"
-                elif fig_code == "COMP" and "TL4" in (tl_programadas_map or {}):
-                    _slot_requerido = "TL4"
-                if _slot_requerido and _slot_requerido not in tl_codes_closed_prev:
-                    continue
-
-                # LLENA / RELLENA / COMPLETA no deben premiar la misma tabla más de una vez.
-                if fig_code in full_table_family_codes and carton_id_norm in full_table_claimed_series:
-                    continue
+                stage_code = _semantic_stage(fig_code)
+                stage_idx = _stage_order(fig_code)
+                if stage_code in full_stage_codes:
+                    closed_fig_keys_now = set(figuras_cerradas_prev)
+                    if not recalc:
+                        for _g_now in (ganadores or []):
+                            _fk_now = _norm_fig_name((_g_now or {}).get("figura") or (_g_now or {}).get("nombre_figura") or "")
+                            if _fk_now:
+                                closed_fig_keys_now.add(_fk_now)
+                    if not figuras_base_keys.issubset(closed_fig_keys_now):
+                        continue
+                    prev_stage_ok = True
+                    if stage_idx >= 2 and "LLEN" not in semantic_closed_prev:
+                        prev_stage_ok = False
+                    if stage_idx >= 3 and "RELL" not in semantic_closed_prev:
+                        prev_stage_ok = False
+                    if stage_idx >= 4 and "YAPA" not in semantic_closed_prev:
+                        prev_stage_ok = False
+                    if not prev_stage_ok:
+                        continue
+                    if stage_code in {"LLEN", "RELL", "COMP"} and carton_id_norm in full_table_claimed_series:
+                        continue
 
                 needed = []
                 has_ultimo = False
-                tl_forzada_programada = False
-
-                # Si esta TL está programada, SOLO puede caer en su cartón programado
-                # y únicamente después de cerrar las demás figuras y respetando el orden TL1->TL4.
-                target_tl = tl_programadas_map.get(fig_code) if fig_code in ("TL1", "TL2", "TL3", "TL4") else None
-                if target_tl:
-                    # Cierre dinámico del MISMO click: si la última figura normal se cerró
-                    # justo ahora, la TL programada ya puede salir sin esperar otra bola.
-                    closed_fig_keys_now = set(figuras_cerradas_prev)
-                    # IMPORTANTE:
-                    #   Las figuras normales sí pueden cerrarse dinámicamente en el MISMO click
-                    #   para permitir que TL1 (LLENA) salga apenas termina la última figura normal.
-                    #   Pero TL2/TL3/TL4 NO deben desbloquearse en ese mismo click por una TL recién caída.
-                    #   Así evitamos que RELLENA aparezca al mismo tiempo que LLENA.
-                    closed_tl_codes_prev_click = set(tl_codes_closed_prev)
-                    if not recalc:
-                        for _g_now in (ganadores or []):
-                            try:
-                                _fk_now = _norm_fig_name((_g_now or {}).get("figura") or (_g_now or {}).get("nombre_figura") or "")
-                            except Exception:
-                                _fk_now = ""
-                            if _fk_now:
-                                closed_fig_keys_now.add(_fk_now)
-
-                    slot_num = int(fig_code[-1]) if fig_code[-1:].isdigit() else 1
-                    prev_tl_ok = True
-                    if slot_num >= 2 and "TL1" not in closed_tl_codes_prev_click:
-                        prev_tl_ok = False
-                    if slot_num >= 3 and "TL2" not in closed_tl_codes_prev_click:
-                        prev_tl_ok = False
-                    if slot_num >= 4 and "TL3" not in closed_tl_codes_prev_click:
-                        prev_tl_ok = False
-
-                    all_non_tl_closed_now = non_tl_fig_keys.issubset(closed_fig_keys_now)
-                    if (not all_non_tl_closed_now) or (not prev_tl_ok):
+                for pos in pat["required_pos"]:
+                    v = pos_map.get(pos, "")
+                    if _is_free_cell(v):
                         continue
+                    sv = str(v).strip()
+                    if sv.isdigit():
+                        n = int(sv)
+                        needed.append(n)
+                        if (not recalc) and (n == ultimo):
+                            has_ultimo = True
+                if not needed:
+                    continue
+                if (not recalc) and (1 <= ultimo <= 75) and (not has_ultimo):
+                    continue
+                if any(n not in marked_nums for n in needed):
+                    continue
 
-                    if str(target_tl.get("serie") or "") != str(serie_archivo):
-                        continue
-                    if _tl_prog_norm_carton(carton_id) != _tl_prog_norm_carton(target_tl.get("carton_id", "")):
-                        continue
+                known.add(key)
+                win = _make_win(pat, serie_archivo, carton_id, carton_id_norm, grid, sorted(list(marked_nums)), needed)
+                ganadores.append(win)
+                nuevos.append(win)
+                if stage_code in full_stage_codes:
+                    natural_stage_hits_now.add(stage_code)
+                if stage_code in {"LLEN", "RELL", "COMP"} and carton_id_norm:
+                    full_table_claimed_series.add(carton_id_norm)
+                    full_table_claimed_prev.add(carton_id_norm)
 
-                    tl_forzada_programada = True
-                    grid_forzada, needed_forzados, marked_forzados, tl_grid_completa = _tl_prog_force_grid_with_marked(
-                        grid, stack, ultimo
-                    )
-                    needed = list(needed_forzados)
-                    has_ultimo = bool(ultimo)
-                else:
-                    for pos in pat["required_pos"]:
-                        v = pos_map.get(pos, "")
-                        if _is_free_cell(v):
-                            continue
-                        sv = str(v).strip()
-                        if sv.isdigit():
-                            n = int(sv)
-                            needed.append(n)
-                            if (not recalc) and (n == ultimo):
-                                has_ultimo = True
+        for pat in tl_patterns:
+            fig_code = pat["code"]
+            target_tl = tl_programadas_map.get(fig_code)
+            if not target_tl:
+                continue
+            if str(target_tl.get("serie") or "") != str(serie_archivo):
+                continue
+            _ix = idx_by_carton.get(_tl_prog_norm_carton(target_tl.get("carton_id", "")))
+            if _ix is None:
+                continue
+            t = tickets[_ix]
+            carton_id = t.get("carton_id", "")
+            grid = t.get("grid")
+            carton_id_norm = _norm_tabla_id(carton_id)
+            key = f"{fecha_iso}|{fig_code}|{serie_archivo}|{carton_id_norm}"
+            if key in known:
+                continue
+            if (not recalc) and pat.get("fig_key") and pat.get("fig_key") in figuras_cerradas_prev:
+                continue
 
-                    if not needed:
-                        continue
+            closed_fig_keys_now = set(figuras_cerradas_prev)
+            if not recalc:
+                for _g_now in (ganadores or []):
+                    _fk_now = _norm_fig_name((_g_now or {}).get("figura") or (_g_now or {}).get("nombre_figura") or "")
+                    if _fk_now:
+                        closed_fig_keys_now.add(_fk_now)
+            if not figuras_base_keys.issubset(closed_fig_keys_now):
+                continue
 
-                    # En modo normal: si la figura NO incluye el último número, NO puede "aparecer" en este click
-                    if (not recalc) and (1 <= ultimo <= 75) and (not has_ultimo):
-                        continue
+            slot_num = int(fig_code[-1]) if fig_code[-1:].isdigit() else 1
+            prev_tl_ok = True
+            if slot_num >= 2 and "TL1" not in tl_codes_closed_prev:
+                prev_tl_ok = False
+            if slot_num >= 3 and "TL2" not in tl_codes_closed_prev:
+                prev_tl_ok = False
+            if slot_num >= 4 and "TL3" not in tl_codes_closed_prev:
+                prev_tl_ok = False
+            if not prev_tl_ok:
+                continue
 
-                ok = True
-                if tl_forzada_programada:
-                    # TL programada solo debe caer cuando la grilla quedó COMPLETA con
-                    # números ya marcados y la última balota realmente participa.
-                    ok = bool(tl_grid_completa and ((not ultimo) or (int(ultimo) in set(marked_forzados))))
-                else:
-                    for n in needed:
-                        if n not in marked_nums:
-                            ok = False
-                            break
+            semantic_code = _tl_prog_semantic_code(fig_code)
+            natural_trigger = semantic_code in natural_stage_hits_now
+            objetivo = max(0, _tl_prog_parse_int(target_tl.get("objetivo"), 0))
+            count_trigger = (marked_count >= objetivo) if objetivo > 0 else True
+            if not (natural_trigger or count_trigger):
+                continue
 
-                if ok:
-                    known.add(key)
-                    numero_ganador = ultimo if ultimo else (needed[-1] if needed else "")
+            grid_forzada, needed_forzados, marked_forzados, tl_grid_completa = _tl_prog_force_grid_with_marked(
+                grid, stack, ultimo, required_pos=pat["required_pos"], force_ultimo=False
+            )
+            if not tl_grid_completa:
+                continue
 
-                    info_b = buscar_info_por_boleto(str(fecha_iso), carton_id, serie_archivo)
-                    vendedor_b = (info_b.get("vendedor") or "").strip()
-                    planilla_b = (info_b.get("planilla") or "").strip()
-                    rango_b    = (info_b.get("rango") or "").strip()
-                    grid_out = grid_forzada if tl_forzada_programada else grid
-                    marked_out = marked_forzados if tl_forzada_programada else sorted(list(marked_nums))
-                    nums_fig_out = needed if tl_forzada_programada else needed
-                    win = {
-                        "fecha": str(fecha_iso),
-                        "figura": pat["nombre"],
-                        "fig_code": fig_code,
-                        "valor": round(float(pat["valor"]), 2),
-                        "serie": serie_archivo,
-                        "vendedor": vendedor_b,
-                        "planilla": planilla_b,
-                        "rango": rango_b,
-                        "sector": (planilla_b or rango_b),
-                        "tabla": carton_id_norm,
-                        "ultima_bola": int(ultimo) if ultimo else "",
-                        "numero_ganador": int(numero_ganador) if str(numero_ganador).isdigit() else str(numero_ganador),
-                        "numeros_figura": nums_fig_out,
-                        "grid": grid_out,
-                        "required_pos": pat["required_pos"],
-                        "color_map_pos": pat["color_map_pos"],
-                        "marcados_nums": marked_out,
-                    }
-                    ganadores.append(win)
-                    nuevos.append(win)
-                    if fig_code in full_table_family_codes and carton_id_norm:
-                        full_table_claimed_series.add(carton_id_norm)
-                        full_table_claimed_prev.add(carton_id_norm)
+            known.add(key)
+            win = _make_win(pat, serie_archivo, carton_id, carton_id_norm, grid_forzada, marked_forzados, needed_forzados)
+            ganadores.append(win)
+            nuevos.append(win)
+            if semantic_code in {"LLEN", "RELL", "COMP"} and carton_id_norm:
+                full_table_claimed_series.add(carton_id_norm)
+                full_table_claimed_prev.add(carton_id_norm)
 
     return ganadores, nuevos, sorted(known)
-
 
 @juego_bp.get("/ganadores")
 def juego_ganadores_list():
