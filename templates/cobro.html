@@ -991,7 +991,7 @@ cfBody.innerHTML = `
   document.addEventListener('click', async (e)=>{
     const btn = e.target.closest('.btn-del-cobro');
     if(!btn) return;
-    if(!window.IS_SUPERADMIN){ alert('Solo el Super Administrador puede eliminar cobros.'); return; }
+    if(window.IS_SUPERADMIN === false){ alert('Solo el Super Administrador puede eliminar cobros.'); return; }
     const fecha = btn.dataset.fecha || ($('#fecha')?.value || '');
     const seud = btn.dataset.seudonimo || '';
     if(!fecha || !seud){ alert('Faltan datos para eliminar el cobro.'); return; }
