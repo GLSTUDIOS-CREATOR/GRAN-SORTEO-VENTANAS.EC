@@ -3894,6 +3894,25 @@ def _read_tree_with_root(path: str, root_tag: str = 'vendedores'):
     return tree, root
 
 
+def _vendor_commission_info_from_node(v):
+    try:
+        mode = ((v.findtext('modo_comision') or 'normal').strip().lower())
+    except Exception:
+        mode = 'normal'
+    try:
+        manual = float(str(v.findtext('comision_manual') or '0').replace(',', '.').strip() or 0)
+    except Exception:
+        manual = 0.0
+    manual = max(0.0, min(100.0, manual))
+    if mode != 'manual' or manual <= 0:
+        mode = 'normal'
+        manual = 0.0
+    return {
+        'modo_comision': mode,
+        'comision_manual': round(manual, 2),
+    }
+
+
 def _indent_tree_if_possible(tree: ET.ElementTree):
     """
     Intenta indentar (Python 3.9+) para que el XML quede legible.
@@ -3918,26 +3937,40 @@ def _write_xml_atomic(tree: ET.ElementTree, path: str):
 # ============================================================
 #  CRUD DE VENDEDORES (robusto; respeta tu API)
 # ============================================================
+
+
 def cargar_vendedores_xml():
     vendedores = []
     # Lee de forma segura (crea el archivo si no existe)
     tree, root = _read_tree_with_root(VENDEDORES_XML, 'vendedores')
 
     for idx, v in enumerate(root.findall('vendedor')):
+        info_com = _vendor_commission_info_from_node(v)
         vendedores.append({
             'id': idx,  # mantener índice para editar/eliminar
             'nombre'  : (v.findtext('nombre') or '').strip(),
             'apellido': (v.findtext('apellido') or '').strip(),
             'seudonimo': (v.findtext('seudonimo') or '').strip(),
+            'modo_comision': info_com['modo_comision'],
+            'comision_manual': info_com['comision_manual'],
         })
     return vendedores
 
 
-def guardar_vendedor(nombre, apellido, seudonimo):
+def guardar_vendedor(nombre, apellido, seudonimo, modo_comision='normal', comision_manual=0.0):
     # Normaliza strings
     nombre = (nombre or '').strip()
     apellido = (apellido or '').strip()
     seudonimo = (seudonimo or '').strip()
+    modo = 'manual' if str(modo_comision or '').strip().lower() == 'manual' else 'normal'
+    try:
+        manual = float(str(comision_manual or 0).replace(',', '.').strip() or 0)
+    except Exception:
+        manual = 0.0
+    manual = max(0.0, min(100.0, manual))
+    if modo != 'manual' or manual <= 0:
+        modo = 'normal'
+        manual = 0.0
 
     tree, root = _read_tree_with_root(VENDEDORES_XML, 'vendedores')
 
@@ -3946,11 +3979,13 @@ def guardar_vendedor(nombre, apellido, seudonimo):
     ET.SubElement(v, 'nombre').text = nombre
     ET.SubElement(v, 'apellido').text = apellido
     ET.SubElement(v, 'seudonimo').text = seudonimo
+    ET.SubElement(v, 'modo_comision').text = modo
+    ET.SubElement(v, 'comision_manual').text = f"{manual:.2f}"
 
     _write_xml_atomic(tree, VENDEDORES_XML)
 
 
-def editar_vendedor(idx, nombre, apellido, seudonimo):
+def editar_vendedor(idx, nombre, apellido, seudonimo, modo_comision=None, comision_manual=None):
     nombre = (nombre or '').strip()
     apellido = (apellido or '').strip()
     seudonimo = (seudonimo or '').strip()
@@ -3970,6 +4005,19 @@ def editar_vendedor(idx, nombre, apellido, seudonimo):
         _set('nombre', nombre)
         _set('apellido', apellido)
         _set('seudonimo', seudonimo)
+
+        if modo_comision is not None or comision_manual is not None:
+            modo = 'manual' if str(modo_comision or '').strip().lower() == 'manual' else 'normal'
+            try:
+                manual = float(str(comision_manual or 0).replace(',', '.').strip() or 0)
+            except Exception:
+                manual = 0.0
+            manual = max(0.0, min(100.0, manual))
+            if modo != 'manual' or manual <= 0:
+                modo = 'normal'
+                manual = 0.0
+            _set('modo_comision', modo)
+            _set('comision_manual', f"{manual:.2f}")
 
         _write_xml_atomic(tree, VENDEDORES_XML)
 
@@ -4025,6 +4073,49 @@ def vendedores():
     )
 
 
+@app.post('/api/vendedores/comision/<seudonimo>')
+def api_vendedor_comision_guardar(seudonimo):
+    if 'usuario' not in session:
+        return jsonify(ok=False, error='no-auth'), 401
+    if not _is_superadmin():
+        return jsonify(ok=False, error='solo-superadmin'), 403
+
+    seudonimo = (seudonimo or '').strip()
+    if not seudonimo:
+        return jsonify(ok=False, error='Seudónimo inválido'), 400
+
+    data = request.get_json(force=True) or {}
+    modo = 'manual' if str(data.get('modo_comision') or '').strip().lower() == 'manual' else 'normal'
+    try:
+        manual = float(str(data.get('comision_manual') or '0').replace(',', '.').strip() or 0)
+    except Exception:
+        manual = 0.0
+    manual = max(0.0, min(100.0, manual))
+    if modo != 'manual' or manual <= 0:
+        modo = 'normal'
+        manual = 0.0
+
+    tree, root = _read_tree_with_root(VENDEDORES_XML, 'vendedores')
+    nodo = None
+    for v in root.findall('vendedor'):
+        if (v.findtext('seudonimo') or '').strip() == seudonimo:
+            nodo = v
+            break
+    if nodo is None:
+        return jsonify(ok=False, error='Vendedor no encontrado'), 404
+
+    def _set(tag, val):
+        el = nodo.find(tag)
+        if el is None:
+            el = ET.SubElement(nodo, tag)
+        el.text = val
+
+    _set('modo_comision', modo)
+    _set('comision_manual', f"{manual:.2f}")
+    _write_xml_atomic(tree, VENDEDORES_XML)
+
+    return jsonify(ok=True, seudonimo=seudonimo, modo_comision=modo, comision_manual=round(manual, 2))
+
 
 # ----------- FUNCIONES PARA ASIGNACIONES -----------
 
@@ -4059,18 +4150,24 @@ def _parse_or_none(path):
     except ET.ParseError:
         return None, None
 
+
+
 def cargar_vendedores():
     vendedores = []
     t, r = _parse_or_none(VENDEDORES_XML)
     if r is None:
         return vendedores
     for v in r.findall('vendedor'):
+        info_com = _vendor_commission_info_from_node(v)
         vendedores.append({
             'nombre': (v.findtext('nombre') or ""),
             'apellido': (v.findtext('apellido') or ""),
-            'seudonimo': (v.findtext('seudonimo') or "")
+            'seudonimo': (v.findtext('seudonimo') or ""),
+            'modo_comision': info_com['modo_comision'],
+            'comision_manual': info_com['comision_manual'],
         })
     return vendedores
+
 
 def leer_asignaciones():
     t, r = _parse_or_none(ASIGNACIONES_XML)
@@ -4655,18 +4752,23 @@ def set_configuracion_dia(fecha_str: str, data: dict):
     _guardar_xml(t, CAJA_XML)
 
 # ─── VENDEDORES y ASIGNACIONES (lectura) ────────────────────────────────────
+
+
 def _cargar_vendedores_base():
-    """Devuelve dict por seudónimo: { seudonimo: {nombre, apellido, seudonimo} }"""
+    """Devuelve dict por seudónimo con datos base y comisión manual opcional."""
     vendedores = {}
     if os.path.exists(VENDEDORES_XML):
         _, r = _leer_xml(VENDEDORES_XML)
         for v in r.findall('vendedor'):
             seud = (v.findtext('seudonimo', '') or '').strip()
             if seud:
+                info_com = _vendor_commission_info_from_node(v)
                 vendedores[seud] = {
                     "nombre":   (v.findtext('nombre', '') or '').strip(),
                     "apellido": (v.findtext('apellido', '') or '').strip(),
-                    "seudonimo": seud
+                    "seudonimo": seud,
+                    "modo_comision": info_com["modo_comision"],
+                    "comision_manual": info_com["comision_manual"],
                 }
     return vendedores
 
@@ -4842,14 +4944,26 @@ def _cobro_qr_normalizar_lista(fecha: str, seudonimo: str, items):
     out.sort(key=lambda x: _safe_int_local(x.get('idx', 0), 0))
     return out
 
-def _calc_cobro_detalle(vendidos: int, cfg: dict):
+
+
+def _calc_cobro_detalle(vendidos: int, cfg: dict, vendor_override: dict | None = None):
     vendidos = max(0, int(vendidos or 0))
     valor = max(0.0, _safe_float_local(cfg.get("valor_boleto"), 0.0))
     pct_base = max(0.0, min(100.0, _safe_float_local(cfg.get("comision_vendedor"), 0.0)))
     pct_extra = max(0.0, min(100.0, _safe_float_local(cfg.get("comision_extra_meta"), 0.0)))
     meta = max(0, _safe_int_local(cfg.get("meta_boletos"), 0))
 
-    pct = pct_base + (pct_extra if (meta > 0 and vendidos >= meta) else 0.0)
+    ov = vendor_override if isinstance(vendor_override, dict) else (cfg if isinstance(cfg, dict) else {})
+    modo_comision = str((ov.get("modo_comision") or ov.get("_modo_comision") or "normal")).strip().lower()
+    comision_manual = max(0.0, min(100.0, _safe_float_local(ov.get("comision_manual", ov.get("_comision_manual", 0)), 0.0)))
+
+    if modo_comision == "manual" and comision_manual > 0:
+        pct = comision_manual
+    else:
+        modo_comision = "normal"
+        comision_manual = 0.0
+        pct = pct_base + (pct_extra if (meta > 0 and vendidos >= meta) else 0.0)
+
     pct = max(0.0, min(100.0, pct))
 
     total_venta = round(vendidos * valor, 2)
@@ -4861,6 +4975,8 @@ def _calc_cobro_detalle(vendidos: int, cfg: dict):
         "comision_vendedor": round(pct_base, 4),
         "comision_extra_meta": round(pct_extra, 4),
         "meta_boletos": meta,
+        "modo_comision": modo_comision,
+        "comision_manual": round(comision_manual, 4),
         "pct_aplicado": round(pct, 4),
         "valor_total_venta": total_venta,
         "gan_vendedor": gan_vendedor,
@@ -4888,6 +5004,8 @@ def _leer_cobros(fecha_str: str):
             "comision_vendedor": _safe_float_local(c.attrib.get('comision_vendedor', 0), 0.0),
             "comision_extra_meta": _safe_float_local(c.attrib.get('comision_extra_meta', 0), 0.0),
             "meta_boletos": _safe_int_local(c.attrib.get('meta_boletos', 0), 0),
+            "modo_comision": (c.attrib.get('modo_comision', 'normal') or 'normal'),
+            "comision_manual": _safe_float_local(c.attrib.get('comision_manual', 0), 0.0),
             # montos calculados guardados (si existen)
             "pct_aplicado": _safe_float_local(c.attrib.get('pct_aplicado', ''), None),
             "valor_total_venta": _safe_float_local(c.attrib.get('valor_total_venta', ''), None),
@@ -4942,6 +5060,7 @@ def _upsert_cobro(fecha_str: str, seudonimo: str, datos: dict):
     # Snapshot + montos guardados (para mantener consistencia histórica)
     for k in (
         "valor_boleto", "comision_vendedor", "comision_extra_meta", "meta_boletos",
+        "modo_comision", "comision_manual",
         "pct_aplicado", "valor_total_venta", "gan_vendedor", "a_pagar_caja", "vuelto"
     ):
         if k in datos and datos.get(k) is not None:
@@ -5069,6 +5188,13 @@ def cobro():
                 cfg_row["comision_extra_meta"] = c.get("comision_extra_meta")
             if c.get("meta_boletos") is not None:
                 cfg_row["meta_boletos"] = c.get("meta_boletos")
+            if str(c.get("modo_comision") or 'normal').strip().lower() == 'manual' and float(c.get("comision_manual") or 0) > 0:
+                cfg_row["modo_comision"] = 'manual'
+                cfg_row["comision_manual"] = float(c.get("comision_manual") or 0)
+        else:
+            if str(base_info.get("modo_comision") or 'normal').strip().lower() == 'manual' and float(base_info.get("comision_manual") or 0) > 0:
+                cfg_row["modo_comision"] = 'manual'
+                cfg_row["comision_manual"] = float(base_info.get("comision_manual") or 0)
 
         detalle = _calc_cobro_detalle(vendidos, cfg_row)
 
@@ -5095,6 +5221,8 @@ def cobro():
 
             # Detalle ya calculado (para evitar inconsistencias en plantilla)
             "valor_boleto_aplicado": float(cfg_row.get("valor_boleto", 0.0) or 0.0),
+            "modo_comision": str((cfg_row.get('modo_comision') or 'normal')).strip().lower(),
+            "comision_manual": round(float(cfg_row.get('comision_manual', 0.0) or 0.0), 2),
             "pct_aplicado": round(float(pct_aplicado_calc or 0.0), 2),
             "total_venta_calc": round(float(total_venta_calc or 0.0), 2),
             "gan_vendedor_calc": round(float(gan_vendedor_calc or 0.0), 2),
@@ -5112,7 +5240,9 @@ def cobro():
         config=config,
         fecha_actual=fecha_actual,
         vendedores=vendedores_ui,
-        paid_totals=paid_totals
+        paid_totals=paid_totals,
+        can_edit_vendor_commission=_is_superadmin(),
+        user_role=session.get('rol', '')
     )
 
 
@@ -5210,7 +5340,12 @@ def guardar_cobro(seudonimo):
         if transferencia < 0 or efectivo < 0:
             return jsonify(ok=False, error="Transferencia y efectivo no pueden ser negativos."), 400
 
-        cfg = get_configuracion_dia(fecha_actual)
+        base_vendedores = _cargar_vendedores_base()
+        vendor_info = base_vendedores.get(seudonimo, {})
+        cfg = dict(get_configuracion_dia(fecha_actual))
+        if str(vendor_info.get('modo_comision') or 'normal').strip().lower() == 'manual' and float(vendor_info.get('comision_manual') or 0) > 0:
+            cfg['modo_comision'] = 'manual'
+            cfg['comision_manual'] = float(vendor_info.get('comision_manual') or 0)
         detalle = _calc_cobro_detalle(vendidos, cfg)
 
         a_pagar_caja = detalle["a_pagar_caja"]
@@ -5237,6 +5372,8 @@ def guardar_cobro(seudonimo):
                 "comision_vendedor": detalle["comision_vendedor"],
                 "comision_extra_meta": detalle["comision_extra_meta"],
                 "meta_boletos": detalle["meta_boletos"],
+                "modo_comision": detalle["modo_comision"],
+                "comision_manual": detalle["comision_manual"],
                 "pct_aplicado": detalle["pct_aplicado"],
                 "valor_total_venta": detalle["valor_total_venta"],
                 "gan_vendedor": detalle["gan_vendedor"],
@@ -5269,6 +5406,8 @@ def guardar_cobro(seudonimo):
                 "transferencia": transferencia,
                 "efectivo": efectivo,
                 "pago": pago_recibido,
+                "modo_comision": detalle["modo_comision"],
+                "comision_manual": round(detalle["comision_manual"], 2),
                 "pct_aplicado": round(detalle["pct_aplicado"], 2),
                 "total_venta": round(detalle["valor_total_venta"], 2),
                 "gan_vendedor": round(detalle["gan_vendedor"], 2),
@@ -5280,6 +5419,97 @@ def guardar_cobro(seudonimo):
         )
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 400
+
+
+
+@app.get('/cobro/recibo/<seudonimo>.pdf')
+def cobro_recibo_pdf(seudonimo):
+    if 'usuario' not in session:
+        return redirect(_login_url())
+
+    fecha_actual = (request.args.get('fecha') or date.today().isoformat()).strip()
+    base = _cargar_vendedores_base().get(seudonimo, {"nombre":"", "apellido":"", "seudonimo": seudonimo})
+    asign = _cargar_asignaciones_por_fecha(fecha_actual).get(seudonimo, {})
+    cobros = _leer_cobros(fecha_actual)
+    c = cobros.get(seudonimo)
+    if not c:
+        return Response('Cobro no encontrado', 404, mimetype='text/plain')
+
+    entregados = int(asign.get('boletos_entregados', 0) or 0)
+    devueltos = int(c.get('devueltos', 0) or 0)
+    vendidos = int(c.get('vendidos', 0) or 0)
+    planillas = asign.get('planillas', []) or []
+    nombre = (str(base.get('nombre','')) + ' ' + str(base.get('apellido',''))).strip() or seudonimo
+    modo_comision = str(c.get('modo_comision') or 'normal').strip().lower()
+    com_manual = float(c.get('comision_manual') or 0)
+
+    detalle = {
+        'valor_boleto': float(c.get('valor_boleto') or 0),
+        'pct_aplicado': float(c.get('pct_aplicado') or 0),
+        'valor_total_venta': float(c.get('valor_total_venta') or 0),
+        'gan_vendedor': float(c.get('gan_vendedor') or 0),
+        'a_pagar_caja': float(c.get('a_pagar_caja') or 0),
+    }
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    y = h - 35
+
+    pdf.setTitle(f"cobro_{fecha_actual}_{seudonimo}")
+    pdf.setFont('Helvetica-Bold', 18)
+    pdf.drawString(35, y, 'Comprobante de Cobro de Caja')
+    y -= 18
+    pdf.setFont('Helvetica', 10)
+    pdf.drawString(35, y, f'Fecha: {fecha_actual}')
+    pdf.drawRightString(w - 35, y, f'Generado por: {session.get("usuario", "") or "Sistema"}')
+
+    y -= 22
+    pdf.roundRect(30, y-92, w-60, 88, 10, stroke=1, fill=0)
+    pdf.setFont('Helvetica-Bold', 12)
+    pdf.drawString(40, y-16, f'Vendedor: {nombre}')
+    pdf.setFont('Helvetica', 10)
+    pdf.drawString(40, y-34, f'Seudónimo: {seudonimo}')
+    pdf.drawString(40, y-50, f'Planillas: {", ".join(planillas) if planillas else "—"}')
+    pdf.drawString(40, y-66, f'Modo comisión: {'Manual' if modo_comision == 'manual' and com_manual > 0 else 'Normal del día'}')
+    if modo_comision == 'manual' and com_manual > 0:
+        pdf.drawString(250, y-66, f'Comisión manual: {com_manual:.2f}%')
+    y -= 110
+
+    rows = [
+        ('Boletos entregados', str(entregados)),
+        ('Boletos devueltos', str(devueltos)),
+        ('Boletos vendidos', str(vendidos)),
+        ('Valor total venta', f"${detalle['valor_total_venta']:.2f}"),
+        ('% comisión aplicado', f"{detalle['pct_aplicado']:.2f}%"),
+        ('Ganancia vendedor', f"${detalle['gan_vendedor']:.2f}"),
+        ('A pagar caja', f"${detalle['a_pagar_caja']:.2f}"),
+        ('Transferencia', f"${float(c.get('transferencia') or 0):.2f}"),
+        ('Efectivo', f"${float(c.get('efectivo') or 0):.2f}"),
+        ('Pago recibido', f"${float(c.get('total_pagar') or 0):.2f}"),
+        ('Vuelto', f"${float(c.get('vuelto') or 0):.2f}"),
+    ]
+    tbl = Table(rows, colWidths=[170, 150])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#EEF2FF')),
+        ('TEXTCOLOR', (0,0), (-1,-1), colors.black),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+        ('FONTNAME', (1,0), (1,-1), 'Helvetica'),
+        ('GRID', (0,0), (-1,-1), .5, colors.HexColor('#CBD5E1')),
+        ('ROWBACKGROUNDS', (0,0), (-1,-1), [colors.white, colors.HexColor('#F8FAFC')]),
+        ('PADDING', (0,0), (-1,-1), 6),
+    ]))
+    tw, th = tbl.wrapOn(pdf, w-70, h)
+    tbl.drawOn(pdf, 35, y-th)
+    y = y - th - 22
+
+    pdf.setFont('Helvetica', 9)
+    pdf.setFillColor(colors.HexColor('#334155'))
+    pdf.drawString(35, max(24, y), 'Documento generado por GL Bingo. Este comprobante resume el cobro liquidado para el vendedor en la fecha indicada.')
+    pdf.showPage()
+    pdf.save()
+    buf.seek(0)
+    return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=f'cobro_{fecha_actual}_{seudonimo}.pdf')
 
 # ─── RUTAS DE APOYO (no interfieren con tu app) ─────────────────────────────
 @app.route("/_login_demo")
@@ -10147,6 +10377,8 @@ def _caja_iter_cobros_dia(root_dia: ET.Element):
                 "comision_vendedor": _safe_float(c.attrib.get('comision_vendedor', 0)),
                 "comision_extra_meta": _safe_float(c.attrib.get('comision_extra_meta', 0)),
                 "meta_boletos": _safe_int(c.attrib.get('meta_boletos', 0)),
+                "modo_comision": (c.attrib.get('modo_comision', 'normal') or 'normal'),
+                "comision_manual": _safe_float(c.attrib.get('comision_manual', 0)),
                 "pct_aplicado": _safe_float(c.attrib.get('pct_aplicado', 0)),
                 "valor_total_venta": _safe_float(c.attrib.get('valor_total_venta', 0)),
                 "gan_vendedor": _safe_float(c.attrib.get('gan_vendedor', 0)),
@@ -10168,6 +10400,8 @@ def _caja_iter_cobros_dia(root_dia: ET.Element):
             "comision_vendedor": 0.0,
             "comision_extra_meta": 0.0,
             "meta_boletos": 0,
+            "modo_comision": "normal",
+            "comision_manual": 0.0,
             "pct_aplicado": 0.0,
             "valor_total_venta": 0.0,
             "gan_vendedor": 0.0,
@@ -10205,19 +10439,18 @@ def _sum_caja(desde_iso, hasta_iso):
             caja = _safe_float(r.get('a_pagar_caja', 0))
 
             if total_venta <= 0 and vend > 0:
-                valor = _safe_float(r.get("valor_boleto", 0)) or _safe_float(cfg_dia.get("valor_boleto"), 0.0)
-                pct_base = _safe_float(r.get("comision_vendedor", 0)) or _safe_float(cfg_dia.get("comision_vendedor"), 0.0)
-                pct_extra = _safe_float(r.get("comision_extra_meta", 0)) or _safe_float(cfg_dia.get("comision_extra_meta"), 0.0)
-                meta = _safe_int(r.get("meta_boletos", 0))
-                if meta <= 0:
-                    meta = _safe_int(cfg_dia.get("meta_boletos"), 0)
-
-                pct = pct_base + (pct_extra if (meta > 0 and vend >= meta) else 0.0)
-                pct = max(0.0, min(100.0, pct))
-
-                total_venta = round(vend * valor, 2)
-                gan_v = round(total_venta * pct / 100.0, 2)
-                caja = round(total_venta - gan_v, 2)
+                cfg_calc = {
+                    "valor_boleto": _safe_float(r.get("valor_boleto", 0)) or _safe_float(cfg_dia.get("valor_boleto"), 0.0),
+                    "comision_vendedor": _safe_float(r.get("comision_vendedor", 0)) or _safe_float(cfg_dia.get("comision_vendedor"), 0.0),
+                    "comision_extra_meta": _safe_float(r.get("comision_extra_meta", 0)) or _safe_float(cfg_dia.get("comision_extra_meta"), 0.0),
+                    "meta_boletos": _safe_int(r.get("meta_boletos", 0)) or _safe_int(cfg_dia.get("meta_boletos"), 0),
+                    "modo_comision": r.get("modo_comision", "normal"),
+                    "comision_manual": _safe_float(r.get("comision_manual", 0), 0.0),
+                }
+                det = _calc_cobro_detalle(vend, cfg_calc)
+                total_venta = det["valor_total_venta"]
+                gan_v = det["gan_vendedor"]
+                caja = det["a_pagar_caja"]
 
             total_recaudado += total_venta
             gan_vendedores  += gan_v
@@ -10258,11 +10491,14 @@ def _sum_asignaciones(desde_iso, hasta_iso):
     return planillas, entregados
 
 # ---- Premios (pagados / por caducar / caducados) ----
+
+
 def _sum_premios(desde_iso, hasta_iso):
     pagos_map = _pp_leer_pagos_map()  # ya definido en tu módulo de premios
     hoy = date.today()
 
     total_pagado = 0.0
+    pagados_count = 0
     por_caducar = 0
     caducados   = 0
 
@@ -10274,6 +10510,7 @@ def _sum_premios(desde_iso, hasta_iso):
             pp = pagos_map.get(k)
             premio_val = _safe_float(g.get("premio", 0), 0)
             if pp:
+                pagados_count += 1
                 total_pagado += _safe_float(pp.get("premio", premio_val), premio_val)
             else:
                 if hoy > caduca:
@@ -10283,9 +10520,11 @@ def _sum_premios(desde_iso, hasta_iso):
 
     return {
         "premios_pagados_total": round(total_pagado, 2),
+        "premios_pagados_cantidad": int(pagados_count),
         "premios_por_caducar": por_caducar,
         "premios_caducados": caducados
     }
+
 
 def _premios_pagados_detalle(desde_iso, hasta_iso):
     pagos = _pp_leer_pagos_map()
@@ -10790,6 +11029,7 @@ def api_gastos_delete(gid):
     return jsonify({"ok": ok})
 
 # -------------------- API: RESUMEN CONTABLE --------------------
+
 @app.get("/api/contabilidad/resumen")
 def api_contabilidad_resumen():
     desde = (request.args.get("desde") or (date.today() - timedelta(days=30)).isoformat()).strip()
@@ -10813,6 +11053,11 @@ def api_contabilidad_resumen():
     banco_items = _bank_list(desde, hasta, "Empresa")
     planillas_asignadas, boletos_entregados = _sum_asignaciones(desde, hasta)
 
+    boletos_por_planilla = max(1, int(globals().get("BOLETOS_POR_PLANILLA", 20) or 20))
+    planillas_impresas = int((int(impresos or 0) + boletos_por_planilla - 1) // boletos_por_planilla) if int(impresos or 0) > 0 else 0
+    planillas_no_asignadas = max(planillas_impresas - int(planillas_asignadas or 0), 0)
+    boletos_no_asignados = max(int(impresos or 0) - int(boletos_entregados or 0), 0)
+
     gan_empresa   = round(caja["total_recaudado"] - caja["gan_vendedores"], 2)
     utilidad_neta = round(gan_empresa - premios["premios_pagados_total"] - gastos_total - sueldos_total, 2)
 
@@ -10824,8 +11069,11 @@ def api_contabilidad_resumen():
     return jsonify({
         "ok": True,
         "rango": {"desde": desde, "hasta": hasta},
+        "planillas_impresas": planillas_impresas,
         "planillas_asignadas": planillas_asignadas,
+        "planillas_no_asignadas": planillas_no_asignadas,
         "boletos_entregados": boletos_entregados,
+        "boletos_no_asignados": boletos_no_asignados,
         "boletos_impresos": impresos,
         "boletos_vendidos": caja["vendidos"],
         "boletos_devueltos": caja["devueltos"],
@@ -10833,6 +11081,7 @@ def api_contabilidad_resumen():
         "ganancia_vendedores": caja["gan_vendedores"],
         "ganancia_empresa": gan_empresa,
         "premios_pagados_total": premios["premios_pagados_total"],
+        "premios_pagados_cantidad": premios["premios_pagados_cantidad"],
         "premios_por_caducar": premios["premios_por_caducar"],
         "premios_caducados": premios["premios_caducados"],
         "gastos_total": gastos_total,
@@ -11000,6 +11249,96 @@ def api_contabilidad_export_csv():
         ])
     out = buff.getvalue()
     return Response(out, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename=contabilidad_{desde}_a_{hasta}.csv"})
+
+
+@app.get('/api/contabilidad/reporte.pdf')
+def api_contabilidad_reporte_pdf():
+    if 'usuario' not in session:
+        return jsonify({"ok": False, "error": "no-auth"}), 401
+
+    desde = (request.args.get('desde') or (date.today() - timedelta(days=30)).isoformat()).strip()
+    hasta = (request.args.get('hasta') or date.today().isoformat()).strip()
+    try:
+        if datetime.fromisoformat(desde) > datetime.fromisoformat(hasta):
+            desde, hasta = hasta, desde
+    except Exception:
+        pass
+
+    resumen_resp = api_contabilidad_resumen().get_json()
+    ranking_resp = api_vendedores_ranking().get_json() if 'api_vendedores_ranking' in globals() else {'items': []}
+    j = resumen_resp if isinstance(resumen_resp, dict) else {}
+    ranking = (ranking_resp or {}).get('items', [])[:12]
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    y = h - 34
+
+    pdf.setTitle(f"contabilidad_{desde}_a_{hasta}")
+    pdf.setFont('Helvetica-Bold', 18)
+    pdf.drawString(34, y, 'Reporte de Contabilidad')
+    y -= 16
+    pdf.setFont('Helvetica', 10)
+    pdf.drawString(34, y, f'Rango: {desde} a {hasta}')
+    pdf.drawRightString(w-34, y, f'Usuario: {session.get("usuario","") or "Sistema"}')
+    y -= 24
+
+    resumen_rows = [
+        ('Boletos impresos', j.get('boletos_impresos', 0)),
+        ('Boletos vendidos', j.get('boletos_vendidos', 0)),
+        ('Boletos devueltos', j.get('boletos_devueltos', 0)),
+        ('Boletos no asignados', j.get('boletos_no_asignados', 0)),
+        ('Planillas impresas', j.get('planillas_impresas', 0)),
+        ('Planillas asignadas', j.get('planillas_asignadas', 0)),
+        ('Planillas no asignadas', j.get('planillas_no_asignadas', 0)),
+        ('Ingresos brutos', f"${float(j.get('ingresos_brutos', 0) or 0):.2f}"),
+        ('Ganancia vendedores', f"${float(j.get('ganancia_vendedores', 0) or 0):.2f}"),
+        ('Ganancia empresa', f"${float(j.get('ganancia_empresa', 0) or 0):.2f}"),
+        ('Premios pagados (cantidad)', j.get('premios_pagados_cantidad', 0)),
+        ('Premios pagados (valor)', f"${float(j.get('premios_pagados_total', 0) or 0):.2f}"),
+        ('Premios por caducar', j.get('premios_por_caducar', 0)),
+        ('Premios caducados', j.get('premios_caducados', 0)),
+        ('Gastos', f"${float(j.get('gastos_total', 0) or 0):.2f}"),
+        ('Sueldos', f"${float(j.get('sueldos_total', 0) or 0):.2f}"),
+        ('Utilidad neta', f"${float(j.get('utilidad_neta', 0) or 0):.2f}"),
+    ]
+    tbl = Table(resumen_rows, colWidths=[210, 120])
+    tbl.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), .5, colors.HexColor('#CBD5E1')),
+        ('ROWBACKGROUNDS', (0,0), (-1,-1), [colors.white, colors.HexColor('#F8FAFC')]),
+        ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
+        ('FONTNAME', (1,0), (1,-1), 'Helvetica'),
+        ('PADDING', (0,0), (-1,-1), 6),
+    ]))
+    tw, th = tbl.wrapOn(pdf, w-68, h)
+    tbl.drawOn(pdf, 34, y-th)
+    y = y - th - 18
+
+    pdf.setFont('Helvetica-Bold', 12)
+    pdf.drawString(34, y, 'Ranking de vendedores (vendidos / devueltos)')
+    y -= 14
+    ranking_rows = [['Vendedor', 'Vendidos', 'Devueltos']]
+    for it in ranking:
+        ranking_rows.append([str(it.get('vendedor') or '—'), str(it.get('vendidos') or 0), str(it.get('devueltos') or 0)])
+    if len(ranking_rows) == 1:
+        ranking_rows.append(['—', '0', '0'])
+    tbl2 = Table(ranking_rows, colWidths=[220, 80, 80])
+    tbl2.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#E2E8F0')),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('GRID', (0,0), (-1,-1), .5, colors.HexColor('#CBD5E1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F8FAFC')]),
+        ('PADDING', (0,0), (-1,-1), 6),
+    ]))
+    tw2, th2 = tbl2.wrapOn(pdf, w-68, h)
+    if y - th2 < 40:
+        pdf.showPage(); y = h - 40
+    tbl2.drawOn(pdf, 34, y-th2)
+
+    pdf.showPage()
+    pdf.save()
+    buf.seek(0)
+    return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=f'contabilidad_{desde}_a_{hasta}.pdf')
 
 # ---- SUPER ADMIN: borrar/anular cobros y reset total ----
 
