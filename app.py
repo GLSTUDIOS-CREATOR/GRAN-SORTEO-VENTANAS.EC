@@ -7045,25 +7045,67 @@ def api_resultados_upsert_ganador():
         ganador["nombre"] = nombre
         ganador["premio"] = round(float(premio or 0.0), 2)
 
-        # Completa vendedor/sector desde asignación de planillas, pero sin pisar lo ya guardado.
+        # Completa SIEMPRE vendedor/sector desde asignación de planillas para que no queden datos viejos.
         try:
             info_boleto = buscar_info_por_boleto(fecha, boleto) or {}
         except Exception:
             info_boleto = {}
-        vendedor_resuelto = str(info_boleto.get("vendedor") or "").strip()
+        vendedor_resuelto = str(info_boleto.get("vendedor") or ganador.get("vendedor") or "").strip()
         sector_resuelto = str(
             info_boleto.get("planilla")
             or info_boleto.get("rango")
             or info_boleto.get("sector")
+            or ganador.get("sector")
             or ""
         ).strip()
 
-        if not str(ganador.get("vendedor") or "").strip():
-            ganador["vendedor"] = vendedor_resuelto
-        if not str(ganador.get("sector") or "").strip():
-            ganador["sector"] = sector_resuelto
+        ganador["vendedor"] = vendedor_resuelto
+        ganador["sector"] = sector_resuelto
 
         _guardar_resultados(fecha, items, extras)
+
+        # Segunda sincronización segura: reconstruye todos los ítems desde los ganadores reales del juego.
+        try:
+            data_g = _safe_json_read(GANADORES_JSON) or {}
+            raw_g = data_g.get(str(fecha), []) or []
+            out_g = []
+            for w in raw_g:
+                if not isinstance(w, dict):
+                    continue
+                item_g = dict(w)
+                try:
+                    item_g["figura"] = _tl_semantic_name(
+                        str(item_g.get("figura") or item_g.get("nombre_figura") or ""),
+                        str(item_g.get("fig_code") or "")
+                    )
+                except Exception:
+                    pass
+                try:
+                    boleto_g = _norm_tabla_id(item_g.get("boleto") or item_g.get("tabla") or "")
+                    info_g = buscar_info_por_boleto(fecha, boleto_g) if boleto_g else {}
+                except Exception:
+                    info_g = {}
+                vendedor_g = str(info_g.get("vendedor") or item_g.get("vendedor") or "").strip()
+                planilla_g = str(
+                    info_g.get("planilla")
+                    or info_g.get("rango")
+                    or info_g.get("sector")
+                    or item_g.get("planilla")
+                    or item_g.get("rango")
+                    or item_g.get("sector")
+                    or ""
+                ).strip()
+                if vendedor_g:
+                    item_g["vendedor"] = vendedor_g
+                if planilla_g:
+                    item_g["sector"] = planilla_g
+                    item_g["planilla"] = planilla_g
+                    item_g["rango"] = planilla_g
+                out_g.append(item_g)
+            _sync_resultados_from_juego(fecha, out_g)
+        except Exception:
+            pass
+
         return jsonify({"ok": True, "fecha": fecha, "ganador": ganador})
     except Exception as e:
         return jsonify({"ok": False, "msg": f"No se pudo guardar ganador: {e}"}), 500
@@ -12874,7 +12916,7 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
 
 @juego_bp.get("/ganadores")
 def juego_ganadores_list():
-    """Lista ganadores detectados (JSON), normalizando TL programadas a nombres semánticos para la UI."""
+    """Lista ganadores detectados (JSON), normalizando TL programadas y resincronizando planillas/resultados."""
     fecha = _get_sorteo_fecha()
     data = _safe_json_read(GANADORES_JSON) or {}
     raw = data.get(str(fecha), []) or []
@@ -12890,7 +12932,44 @@ def juego_ganadores_list():
             )
         except Exception:
             pass
+
+        # Resolver SIEMPRE datos vigentes de planilla/vendedor para este boleto.
+        try:
+            boleto = _norm_tabla_id(item.get("boleto") or item.get("tabla") or "")
+            info_boleto = buscar_info_por_boleto(fecha, boleto) if boleto else {}
+        except Exception:
+            info_boleto = {}
+
+        vendedor_resuelto = str(
+            info_boleto.get("vendedor")
+            or item.get("vendedor")
+            or ""
+        ).strip()
+        planilla_resuelta = str(
+            info_boleto.get("planilla")
+            or info_boleto.get("rango")
+            or info_boleto.get("sector")
+            or item.get("planilla")
+            or item.get("rango")
+            or item.get("sector")
+            or ""
+        ).strip()
+
+        if vendedor_resuelto:
+            item["vendedor"] = vendedor_resuelto
+        if planilla_resuelta:
+            item["sector"] = planilla_resuelta
+            item["planilla"] = planilla_resuelta
+            item["rango"] = planilla_resuelta
+
         out.append(item)
+
+    # Mantener resultados_sorteo.xml alineado con la cola/orden real del juego.
+    try:
+        _sync_resultados_from_juego(fecha, out)
+    except Exception:
+        pass
+
     return jsonify(ok=True, fecha=fecha, ganadores=out)
 
 @juego_bp.get("/ganadores.xml")
