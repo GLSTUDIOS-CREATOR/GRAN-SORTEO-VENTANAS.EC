@@ -17190,6 +17190,38 @@ def _gdx_build_line_rows(row: dict, has_winner: bool) -> list:
         line_rows.append({"campo": field, "texto": txt})
     return line_rows
 
+def _gdx_current_row_from_state(rows: list, fecha_iso: str, action=None, index_override=None) -> dict:
+    """Mantiene el XML de planillas sincronizado con el mismo índice usado por cartón ganador."""
+    if not rows:
+        return {f: "" for f in _GDX_FIELDS}
+
+    idx0 = len(rows) - 1
+    try:
+        if "_vmix_carton_pick_index" in globals() and callable(_vmix_carton_pick_index):
+            idx0, _idx1 = _vmix_carton_pick_index(len(rows), str(fecha_iso), action=action, index_override=index_override)
+        elif "_vmix_carton_state_read" in globals() and callable(_vmix_carton_state_read):
+            state = _vmix_carton_state_read() or {}
+            by_fecha = state.get("por_fecha") if isinstance(state.get("por_fecha"), dict) else {}
+            raw = by_fecha.get(str(fecha_iso), state.get("actual", len(rows)))
+            try:
+                idx1 = int(raw)
+            except Exception:
+                idx1 = len(rows)
+            if idx1 < 1:
+                idx1 = 1
+            if idx1 > len(rows):
+                idx1 = len(rows)
+            idx0 = idx1 - 1
+    except Exception:
+        idx0 = len(rows) - 1
+
+    if idx0 < 0:
+        idx0 = 0
+    if idx0 >= len(rows):
+        idx0 = len(rows) - 1
+    return rows[idx0]
+
+
 def _gdx_build_root(fecha_iso: str = "") -> ET.Element:
     fecha_iso = _gdx_str(fecha_iso) or (_get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else date.today().isoformat())
     idx_map = _gdx_num_fig_map(fecha_iso)
@@ -17207,7 +17239,14 @@ def _gdx_build_root(fecha_iso: str = "") -> ET.Element:
         if any(_gdx_str(row.get(k)) for k in ("figura", "boleto", "vendedor", "cliente_nombre", "sector")):
             rows.append(row)
 
-    last = rows[-1] if rows else {f: "" for f in _GDX_FIELDS}
+    action = _gdx_str(request.args.get("accion") or request.args.get("a") or request.args.get("action")) if request else ""
+    idx_raw = _gdx_str(request.args.get("index") or request.args.get("idx")) if request else ""
+    try:
+        idx_override = int(idx_raw) if idx_raw else None
+    except Exception:
+        idx_override = None
+
+    last = _gdx_current_row_from_state(rows, fecha_iso, action=action, index_override=idx_override) if rows else {f: "" for f in _GDX_FIELDS}
     if not _gdx_str(last.get("texto_completo")):
         last["texto_completo"] = "SIN GANADOR AUN"
 
