@@ -6419,6 +6419,52 @@ def _sync_resultados_from_juego(fecha_iso, ganadores):
     except Exception:
         return False
 
+def _resultado_meta_para_ganador(fecha_iso, figura, boleto):
+    """
+    Resuelve metadatos editables del ganador (nombre/premio) y de planilla
+    (vendedor/sector) para mantener UI + XML de vMix en concordancia.
+    """
+    figura_s = str(figura or "").strip()
+    boleto_s = _norm_tabla_id(boleto or "")
+    meta = {
+        "nombre": "",
+        "premio": 0.0,
+        "vendedor": "",
+        "sector": "",
+    }
+
+    try:
+        actual = _cargar_resultados(fecha_iso) or {"items": []}
+        for item in (actual.get("items") or []):
+            if str(item.get("figura") or "").strip().lower() != figura_s.lower():
+                continue
+            for g in (item.get("ganadores") or []):
+                if _norm_tabla_id(g.get("boleto") or "") != boleto_s:
+                    continue
+                meta["nombre"] = str(g.get("nombre") or "").strip()
+                meta["premio"] = _safe_float(g.get("premio"), 0.0)
+                meta["vendedor"] = str(g.get("vendedor") or "").strip()
+                meta["sector"] = str(g.get("sector") or "").strip()
+                raise StopIteration
+    except StopIteration:
+        pass
+    except Exception:
+        pass
+
+    try:
+        info = buscar_info_por_boleto(fecha_iso, boleto_s) or {}
+    except Exception:
+        info = {}
+
+    if not str(meta.get("vendedor") or "").strip():
+        meta["vendedor"] = str(info.get("vendedor") or "").strip()
+    if not str(meta.get("sector") or "").strip():
+        meta["sector"] = str(info.get("planilla") or info.get("rango") or info.get("sector") or "").strip()
+
+    meta["boleto"] = boleto_s
+    meta["figura"] = figura_s
+    return meta
+
 # ------------------ Reintegro desde LOGS ------------------
 def _find_image_case_insensitive(dirs, filename):
     base = (filename or "").strip()
@@ -6631,6 +6677,29 @@ def _draw_ultrablack(c, text, x, y, size, font):
         c.drawRightString(x+dx, y+dy, text)
 
 # --------- Helpers de SPINNERS (Extras) ----------
+def _sanitize_spinner_list(values):
+    """Filtra placeholders como 0000 y deja solo spinners realmente lanzados."""
+    out = []
+    seen = set()
+    for raw in (values or []):
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        s = re.sub(r"\D", "", s)
+        if not s:
+            continue
+        s = s[:4].zfill(4)
+        if s in {"0000", "000", "00", "0"}:
+            continue
+        if int(s) <= 0:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out[:20]
+
+
 def _parse_spinners(extras: dict):
     """
     Lee extras y extrae lista de spinners (hasta 20) y el valor por spinner.
@@ -6647,7 +6716,7 @@ def _parse_spinners(extras: dict):
     raw_val  = (block.get("valor") or (block.get("texto") or "")).strip()
 
     tokens = re.findall(r"\d{1,4}", raw_nums)
-    nums = [t.zfill(4) for t in tokens][:20]
+    nums = _sanitize_spinner_list(tokens)
 
     m = re.search(r"(\d+(?:[.,]\d{1,2})?)", raw_val)
     valor = None
@@ -6710,7 +6779,7 @@ def _spinners_from_sources_for_date(fecha_iso: str, extras: dict | None = None):
             nums = [str(x).strip() for x in (_load_spinners_for_fecha(fecha_iso) or []) if str(x).strip()]
     except Exception:
         nums = []
-    nums = nums[:20]
+    nums = _sanitize_spinner_list(nums)
     return {"nums": nums, "valor": data.get("valor"), "texto": data.get("texto") or ""}
 
 
@@ -6767,98 +6836,98 @@ def _reintegro_from_sources_for_date(fecha_iso: str):
 
 
 def _draw_spinners_card(c, x, y, w, h, nums, valor, font):
-    """
-    Tarjeta SPINNERS con 'pastillas' de 4 cuadritos.
-    - Las filas se **CENTRAN** horizontalmente.
-    - Se ajusta tamaño para encajar sin recortar.
-    """
-    # Tarjeta
-    c.setFillColor(colors.HexColor("#F8FAFF"))
+    """Tarjeta SPINNERS con mejor estética y solo números realmente jugados."""
+    nums = _sanitize_spinner_list(nums)
+
+    c.setFillColor(colors.HexColor("#FFFFFF"))
     c.setStrokeColor(colors.HexColor("#CBD5F1"))
     c.roundRect(x, y, w, h, 10, stroke=1, fill=1)
 
+    header_h = 22
+    c.setFillColor(colors.HexColor("#243C94"))
+    c.roundRect(x, y + h - header_h, w, header_h, 10, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont(font, 10)
+    c.drawCentredString(x + w/2, y + h - 15, "SPINNERS JUGADOS")
+
     pad = 10
     inner_x = x + pad
-    inner_y = y + pad
-    inner_w = w - 2*pad
-    inner_h = h - 2*pad
+    inner_w = w - 2 * pad
+    top_y = y + h - header_h - 12
 
-    # Título + valor
-    c.setFillColor(colors.HexColor("#0F172A")); c.setFont(font, 10)
-    c.drawString(inner_x, y + h - pad - 6, "SPINNERS")
     if valor is not None:
-        c.setFillColor(colors.HexColor("#334155")); c.setFont(font, 9)
-        c.drawRightString(x + w - pad, y + h - pad - 6, f"Valor c/u: {_money(valor)}")
+        badge_w = min(88, inner_w * 0.34)
+        c.setFillColor(colors.HexColor("#E8F3FF"))
+        c.setStrokeColor(colors.HexColor("#BFDBFE"))
+        c.roundRect(inner_x, top_y - 4, badge_w, 16, 7, stroke=1, fill=1)
+        c.setFillColor(colors.HexColor("#1D4ED8"))
+        c.setFont(font, 8)
+        c.drawCentredString(inner_x + badge_w/2, top_y + 1, f"C/U {_money(valor)}")
 
-    # Parámetros visuales
-    title_h     = 18          # espacio reservado para el título
-    spinner_gap = 12          # separación entre spinners
-    row_gap     = 8           # separación entre filas
-    box_gap     = 3           # separación entre dígitos
-    pill_pad    = 6           # padding interno de la pastilla
-    grid_h      = max(10, inner_h - title_h)
-
-    n = len(nums)
-    if n == 0:
+    if not nums:
+        c.setFillColor(colors.HexColor("#94A3B8"))
+        c.setFont(font, 10)
+        c.drawCentredString(x + w/2, y + h/2 - 8, "SIN SPINNERS JUGADOS")
         return
 
-    # Elegimos per_row y tamaño de box maximizando el encaje
-    best = None  # (box_size, per_row, rows)
-    max_per_row = min(n, 8)
+    title_gap = 18 if valor is not None else 6
+    body_top = y + h - header_h - title_gap
+    body_h = max(32, body_top - y - 10)
+
+    spinner_gap = 10
+    row_gap = 8
+    box_gap = 2.5
+    pill_pad_x = 6
+    pill_pad_y = 5
+
+    n = len(nums)
+    best = None
+    max_per_row = min(n, 6)
     for per_row in range(max_per_row, 0, -1):
         rows = math.ceil(n / per_row)
-
-        # Ancho disponible -> box por ancho
-        max_box_w = ((inner_w - (per_row - 1) * spinner_gap) / per_row - 2 * pill_pad - 3 * box_gap) / 4.0
-        # Alto disponible -> box por alto
-        max_box_h = ((grid_h - (rows - 1) * row_gap) / rows - 2 * pill_pad)
-
-        box = min(max_box_w, max_box_h, 18)  # límite superior estético
-        if box >= 10:  # mínimo legible
+        max_box_w = ((inner_w - (per_row - 1) * spinner_gap) / per_row - 2 * pill_pad_x - 3 * box_gap) / 4.0
+        max_box_h = ((body_h - (rows - 1) * row_gap) / rows - 2 * pill_pad_y)
+        box = min(max_box_w, max_box_h, 15)
+        if box >= 8.5:
             if best is None or box > best[0]:
                 best = (box, per_row, rows)
 
     if best is None:
-        best = (8.0, min(n, 6), math.ceil(n / min(n, 6)))
+        best = (8.5, min(n, 4), math.ceil(n / max(1, min(n, 4))))
 
     box, per_row, rows = best
-    fs = max(9, min(14, box * 0.70))
+    pill_h = 2 * pill_pad_y + box
+    pill_w = 2 * pill_pad_x + 4 * box + 3 * box_gap
+    fs = max(8.0, min(11.0, box * 0.72))
 
-    pill_h = 2 * pill_pad + box
-    pill_w = 2 * pill_pad + 4 * box + 3 * box_gap
-
-    # Dibujo centrado por fila
-    c.setFont(font, fs)
     idx = 0
+    grid_top = y + 10 + body_h - pill_h
     for r in range(rows):
         remaining = n - idx
         count = min(per_row, remaining)
         row_w = count * pill_w + (count - 1) * spinner_gap
-        start_x = inner_x + max(0, (inner_w - row_w) / 2.0)  # <-- centrado
-        y_row = inner_y + grid_h - pill_h - r * (pill_h + row_gap)
+        start_x = inner_x + max(0, (inner_w - row_w) / 2.0)
+        y_row = grid_top - r * (pill_h + row_gap)
 
         for j in range(count):
             cur_x = start_x + j * (pill_w + spinner_gap)
 
-            # Pastilla
-            c.setFillColor(colors.HexColor("#EEF2FF"))
-            c.setStrokeColor(colors.HexColor("#C7D2FE"))
+            c.setFillColor(colors.HexColor("#EEF4FF"))
+            c.setStrokeColor(colors.HexColor("#BFD0FF"))
             c.roundRect(cur_x, y_row, pill_w, pill_h, 7, stroke=1, fill=1)
 
-            # 4 cuadritos
             s = re.sub(r"\D", "", str(nums[idx]))[:4].rjust(4, "0")
-            xx = cur_x + pill_pad
-            yy = y_row + pill_pad
+            xx = cur_x + pill_pad_x
+            yy = y_row + pill_pad_y
             for ch in s:
                 c.setFillColor(colors.white)
-                c.setStrokeColor(colors.HexColor("#94A3B8"))
-                c.roundRect(xx, yy, box, box, 3, stroke=1, fill=1)
-
-                c.setFillColor(colors.HexColor("#111827"))
+                c.setStrokeColor(colors.HexColor("#8FA8FF"))
+                c.roundRect(xx, yy, box, box, 2.8, stroke=1, fill=1)
+                c.setFillColor(colors.HexColor("#14213D"))
+                c.setFont(font, fs)
                 tx = xx + (box - pdfmetrics.stringWidth(ch, font, fs)) / 2.0
-                ty = yy + (box - fs) / 2.0 - 0.5
+                ty = yy + (box - fs) / 2.0 + 0.2
                 c.drawString(tx, ty, ch)
-
                 xx += box + box_gap
 
             idx += 1
@@ -7045,64 +7114,52 @@ def api_resultados_upsert_ganador():
         ganador["nombre"] = nombre
         ganador["premio"] = round(float(premio or 0.0), 2)
 
-        # Completa SIEMPRE vendedor/sector desde asignación de planillas para que no queden datos viejos.
+        # Completa vendedor/sector desde asignación de planillas, pero sin pisar lo ya guardado.
         try:
             info_boleto = buscar_info_por_boleto(fecha, boleto) or {}
         except Exception:
             info_boleto = {}
-        vendedor_resuelto = str(info_boleto.get("vendedor") or ganador.get("vendedor") or "").strip()
+        vendedor_resuelto = str(info_boleto.get("vendedor") or "").strip()
         sector_resuelto = str(
             info_boleto.get("planilla")
             or info_boleto.get("rango")
             or info_boleto.get("sector")
-            or ganador.get("sector")
             or ""
         ).strip()
 
-        ganador["vendedor"] = vendedor_resuelto
-        ganador["sector"] = sector_resuelto
+        ganador["vendedor"] = vendedor_resuelto or str(ganador.get("vendedor") or "").strip()
+        ganador["sector"] = sector_resuelto or str(ganador.get("sector") or "").strip()
 
         _guardar_resultados(fecha, items, extras)
 
-        # Segunda sincronización segura: reconstruye todos los ítems desde los ganadores reales del juego.
         try:
             data_g = _safe_json_read(GANADORES_JSON) or {}
             raw_g = data_g.get(str(fecha), []) or []
-            out_g = []
-            for w in raw_g:
-                if not isinstance(w, dict):
+            enriquecidos = []
+            for ww in raw_g:
+                if not isinstance(ww, dict):
                     continue
-                item_g = dict(w)
+                item_w = dict(ww)
                 try:
-                    item_g["figura"] = _tl_semantic_name(
-                        str(item_g.get("figura") or item_g.get("nombre_figura") or ""),
-                        str(item_g.get("fig_code") or "")
+                    item_w["figura"] = _tl_semantic_name(
+                        str(item_w.get("figura") or item_w.get("nombre_figura") or ""),
+                        str(item_w.get("fig_code") or "")
                     )
                 except Exception:
                     pass
-                try:
-                    boleto_g = _norm_tabla_id(item_g.get("boleto") or item_g.get("tabla") or "")
-                    info_g = buscar_info_por_boleto(fecha, boleto_g) if boleto_g else {}
-                except Exception:
-                    info_g = {}
-                vendedor_g = str(info_g.get("vendedor") or item_g.get("vendedor") or "").strip()
-                planilla_g = str(
-                    info_g.get("planilla")
-                    or info_g.get("rango")
-                    or info_g.get("sector")
-                    or item_g.get("planilla")
-                    or item_g.get("rango")
-                    or item_g.get("sector")
-                    or ""
-                ).strip()
-                if vendedor_g:
-                    item_g["vendedor"] = vendedor_g
-                if planilla_g:
-                    item_g["sector"] = planilla_g
-                    item_g["planilla"] = planilla_g
-                    item_g["rango"] = planilla_g
-                out_g.append(item_g)
-            _sync_resultados_from_juego(fecha, out_g)
+                enriquecidos.append(item_w)
+            _sync_resultados_from_juego(str(fecha), enriquecidos)
+            try:
+                ultimo_xml = 0
+                if os.path.exists(GANADORES_XML):
+                    rg = ET.parse(GANADORES_XML).getroot()
+                    ultimo_xml = _safe_int(rg.attrib.get("ultimo_marcado"), 0)
+                elif os.path.exists(GANADORES_XML_PUBLIC):
+                    rg = ET.parse(GANADORES_XML_PUBLIC).getroot()
+                    ultimo_xml = _safe_int(rg.attrib.get("ultimo_marcado"), 0)
+            except Exception:
+                ultimo_xml = 0
+            _write_ganadores_xml(str(fecha), ultimo_xml, enriquecidos)
         except Exception:
             pass
 
@@ -7242,11 +7299,19 @@ def boletin_pdf():
                 draw_h *= f
             c.drawImage(img, L["x"], H - (L["y"] + draw_h), width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
 
-        c.setFillColor(colors.black)
+        # Título y fecha con mejor estética
+        date_card_w = 150
+        date_card_h = 28
+        date_card_x = (W - date_card_w) / 2.0
+        date_card_y = H - 68
+        c.setFillColor(colors.HexColor("#0F2A7A"))
+        c.setStrokeColor(colors.HexColor("#E5EDFF"))
+        c.roundRect(date_card_x, date_card_y, date_card_w, date_card_h, 10, stroke=1, fill=1)
+        c.setFillColor(colors.white)
         c.setFont(FONT, 18)
-        c.drawCentredString(W/2, H - 42, T("JUEGO HOY"))
+        c.drawCentredString(W/2, H - 34, T("JUEGO DEL DIA"))
         c.setFont(FONT, 11)
-        c.drawCentredString(W/2, H - 58, T(_es_corta(fecha_objetivo).capitalize()))
+        c.drawCentredString(W/2, date_card_y + 9, T(_es_largo(fecha_objetivo).capitalize()))
 
         TL = layout.get("total", {"x": W - 22, "y": 24, "size": 56, "align": "right"})
         c.setFillColor(colors.white)
@@ -7297,7 +7362,7 @@ def boletin_pdf():
         c.rect(0, y, W, 18, 0, 1)
         c.setFillColor(colors.white)
         c.setFont(FONT, 10)
-        c.drawCentredString(W/2, y + 5, T(f"RESULTADOS SORTEO { _es_largo(fecha) }"))
+        c.drawCentredString(W/2, y + 5, T(f"RESULTADOS DEL SORTEO · { _es_largo(fecha).upper() }"))
         y -= 8
 
         chip_y = y
@@ -7435,21 +7500,21 @@ def boletin_pdf():
 
                     label = str((rein_log.get("archivo") or "")).rsplit('.', 1)[0].strip() or "SIN REINTEGRO"
                     c.setFillColor(colors.HexColor("#1F2937"))
-                    c.setFont(FONT, 9)
-                    txt = _fit_text_one_line(c, label, FONT, 9, slot_w - 16)
-                    c.drawCentredString(cur_x + slot_w/2, card_y + 22, T(txt))
+                    c.setFont(FONT, 8.5)
+                    txt = _fit_text_one_line(c, label, FONT, 8.5, slot_w - 20)
+                    c.drawCentredString(cur_x + slot_w/2, card_y + 18, T(txt))
 
                     if rein_log.get("imagen") and os.path.exists(str(rein_log.get("imagen"))):
                         try:
                             img = ImageReader(str(rein_log.get("imagen")))
                             iw, ih = img.getSize()
-                            max_w = slot_w - 22
-                            max_h = section_h - 54
+                            max_w = min(slot_w * 0.72, slot_w - 34)
+                            max_h = min(section_h * 0.52, section_h - 78)
                             s = min(max_w / float(iw), max_h / float(ih), 1.0)
                             draw_w = iw * s
                             draw_h = ih * s
                             ix = cur_x + (slot_w - draw_w) / 2.0
-                            iy = card_y + 30 + max(0, (max_h - draw_h) / 2.0)
+                            iy = card_y + 34 + max(0, (max_h - draw_h) / 2.0)
                             c.drawImage(img, ix, iy, width=draw_w, height=draw_h, preserveAspectRatio=True, mask='auto')
                         except Exception:
                             c.setFillColor(colors.HexColor("#9CA3AF"))
@@ -12248,18 +12313,39 @@ def _write_ganadores_xml(fecha_iso: str, ultimo_marcado: int, ganadores: list):
 
 
     for g in ganadores:
+        figura_sem = str(g.get("figura", ""))
+        boleto_sem = _norm_tabla_id(g.get("boleto") or g.get("tabla") or "")
+        meta = _resultado_meta_para_ganador(fecha_iso, figura_sem, boleto_sem)
+        premio_xml = _safe_float(meta.get("premio"), None)
+        if premio_xml is None:
+            premio_xml = _safe_float(g.get("premio"), None)
+        if premio_xml is None:
+            premio_xml = _safe_float(g.get("valor"), 0.0)
+        vendedor_xml = str(meta.get("vendedor") or g.get("vendedor") or "").strip()
+        sector_xml = str(meta.get("sector") or g.get("sector") or g.get("planilla") or g.get("rango") or "").strip()
+        nombre_xml = str(meta.get("nombre") or g.get("nombre") or g.get("nota") or "").strip()
+
         ga = ET.SubElement(root, "ganador", {
-            "figura": str(g.get("figura","")),
+            "figura": figura_sem,
             "fig_code": str(g.get("fig_code","")),
-            "valor": f'{float(g.get("valor",0) or 0):.2f}',
+            "valor": f'{float(premio_xml or 0):.2f}',
             "serie": str(g.get("serie","")),
-            "tabla": str(g.get("tabla","")),
-            "ultima_bola": str(g.get("ultima_bola",""))
+            "tabla": boleto_sem,
+            "ultima_bola": str(g.get("ultima_bola","")),
+            "vendedor": vendedor_xml,
+            "sector": sector_xml,
+            "planilla": sector_xml,
+            "nombre": nombre_xml
         })
 
         # resumen
         ET.SubElement(ga, "numeros_figura").text = ",".join(str(x) for x in (g.get("numeros_figura") or []))
         ET.SubElement(ga, "numero_ganador").text = str(g.get("numero_ganador","") or "")
+        ET.SubElement(ga, "nombre").text = nombre_xml
+        ET.SubElement(ga, "vendedor").text = vendedor_xml
+        ET.SubElement(ga, "sector").text = sector_xml
+        ET.SubElement(ga, "planilla").text = sector_xml
+        ET.SubElement(ga, "premio").text = f'{float(premio_xml or 0):.2f}'
 
         # grilla
         carton = ET.SubElement(ga, "carton", {"id": str(g.get("tabla",""))})
@@ -12916,7 +13002,7 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
 
 @juego_bp.get("/ganadores")
 def juego_ganadores_list():
-    """Lista ganadores detectados (JSON), normalizando TL programadas y resincronizando planillas/resultados."""
+    """Lista ganadores detectados (JSON), normalizando TL programadas y enriqueciendo datos de planilla/resultados."""
     fecha = _get_sorteo_fecha()
     data = _safe_json_read(GANADORES_JSON) or {}
     raw = data.get(str(fecha), []) or []
@@ -12933,43 +13019,26 @@ def juego_ganadores_list():
         except Exception:
             pass
 
-        # Resolver SIEMPRE datos vigentes de planilla/vendedor para este boleto.
         try:
             boleto = _norm_tabla_id(item.get("boleto") or item.get("tabla") or "")
-            info_boleto = buscar_info_por_boleto(fecha, boleto) if boleto else {}
+            meta = _resultado_meta_para_ganador(fecha, item.get("figura") or "", boleto)
+            item["boleto"] = boleto
+            item["tabla"] = boleto
+            item["nombre"] = str(meta.get("nombre") or item.get("nombre") or item.get("nota") or "").strip()
+            item["vendedor"] = str(meta.get("vendedor") or item.get("vendedor") or "").strip()
+            item["sector"] = str(meta.get("sector") or item.get("sector") or item.get("planilla") or item.get("rango") or "").strip()
+            item["planilla"] = item["sector"]
+            premio_res = _safe_float(meta.get("premio"), None)
+            if premio_res is None:
+                premio_res = _safe_float(item.get("premio"), None)
+            if premio_res is None:
+                premio_res = _safe_float(item.get("valor"), 0.0)
+            item["premio"] = premio_res
+            item["valor"] = premio_res
         except Exception:
-            info_boleto = {}
-
-        vendedor_resuelto = str(
-            info_boleto.get("vendedor")
-            or item.get("vendedor")
-            or ""
-        ).strip()
-        planilla_resuelta = str(
-            info_boleto.get("planilla")
-            or info_boleto.get("rango")
-            or info_boleto.get("sector")
-            or item.get("planilla")
-            or item.get("rango")
-            or item.get("sector")
-            or ""
-        ).strip()
-
-        if vendedor_resuelto:
-            item["vendedor"] = vendedor_resuelto
-        if planilla_resuelta:
-            item["sector"] = planilla_resuelta
-            item["planilla"] = planilla_resuelta
-            item["rango"] = planilla_resuelta
+            pass
 
         out.append(item)
-
-    # Mantener resultados_sorteo.xml alineado con la cola/orden real del juego.
-    try:
-        _sync_resultados_from_juego(fecha, out)
-    except Exception:
-        pass
-
     return jsonify(ok=True, fecha=fecha, ganadores=out)
 
 @juego_bp.get("/ganadores.xml")
@@ -14000,10 +14069,22 @@ def _vmix_build_carton_ganador_table_xml(action=None, index_override=None):
     ET.SubElement(fila, "FIGURA").text = fig_name
     ET.SubElement(fila, "VALOR").text = val_raw
     ET.SubElement(fila, "VALOR_FMT").text = _vmix_money_fmt(val_raw)
-    ET.SubElement(fila, "BOLETO").text = (sel_g.attrib.get("tabla", "") if sel_g is not None else "")
-    ET.SubElement(fila, "TABLA").text = (sel_g.attrib.get("tabla", "") if sel_g is not None else "")
+    boleto_sel = (sel_g.attrib.get("tabla", "") if sel_g is not None else "")
+    vendedor_sel = (sel_g.attrib.get("vendedor", "") if sel_g is not None else "")
+    sector_sel = (sel_g.attrib.get("sector", "") if sel_g is not None else "")
+    nombre_sel = (sel_g.attrib.get("nombre", "") if sel_g is not None else "")
+    ET.SubElement(fila, "BOLETO").text = boleto_sel
+    ET.SubElement(fila, "TABLA").text = boleto_sel
+    ET.SubElement(fila, "NUMERO_CARTON_GANADOR").text = boleto_sel
     ET.SubElement(fila, "SERIE").text = (sel_g.attrib.get("serie", "") if sel_g is not None else "")
     ET.SubElement(fila, "ULTIMA_BOLA").text = (sel_g.attrib.get("ultima_bola", "") if sel_g is not None else "")
+    ET.SubElement(fila, "VENDEDOR").text = vendedor_sel
+    ET.SubElement(fila, "NOMBRE_VENDEDOR").text = vendedor_sel
+    ET.SubElement(fila, "SECTOR").text = sector_sel
+    ET.SubElement(fila, "PLANILLA").text = sector_sel
+    ET.SubElement(fila, "PLANILLA_ASIGNADA").text = sector_sel
+    ET.SubElement(fila, "NOMBRE_BOLETIN").text = nombre_sel
+    ET.SubElement(fila, "OBSERVACION").text = nombre_sel
     ET.SubElement(fila, "GANADORES_FIGURA").text = str(sum(1 for g in ganadores if (g.attrib.get("figura","") == fig_name)))
     ET.SubElement(fila, "GANADORES_TOTAL").text = str(total)
 
