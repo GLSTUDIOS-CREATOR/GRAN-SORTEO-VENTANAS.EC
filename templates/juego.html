@@ -1073,13 +1073,13 @@
 #fixWinnerWrap{ margin-top:12px; }
 #fixWinnerWrap .winner-grid{
   max-width:300px;
-  margin:10px auto 6px;
-  gap:5px;
+  margin:6px auto 4px;
+  gap:4px;
 }
 #fixWinnerWrap .wcell{
   border-width:1px;
-  border-radius:12px;
-  font-size:22px;
+  border-radius:10px;
+  font-size:20px;
   box-shadow:0 8px 18px rgba(0,0,0,.22);
 }
 #fixWinnerWrap .winner-actions .btn:disabled{
@@ -1088,13 +1088,13 @@
 }
 #fixWinnerWrap .fix-sub b{ color: var(--gold); }
 
-/* ===== Corrección boleto: ganador al costado, visible y con chips de otros ganadores ===== */
+/* ===== Corrección boleto: ganador al costado, visible y compacto ===== */
 #fixBoletoModal .modal-card{
-  width:min(1480px, 97vw);
+  width:min(1520px, 97vw);
   max-height:92vh;
 }
 #fixBoletoModal .fix-panels{
-  grid-template-columns:minmax(0,1.02fr) minmax(0,1.02fr) minmax(340px,.92fr);
+  grid-template-columns:minmax(0,1.02fr) minmax(0,1.02fr) minmax(390px,1fr);
   align-items:start;
 }
 #fixBoletoModal #fixWinnerWrap{
@@ -1102,61 +1102,100 @@
   align-self:start;
   position:sticky;
   top:0;
-  max-height:calc(92vh - 190px);
+  max-height:calc(92vh - 165px);
   overflow:auto;
   scrollbar-gutter:stable;
-}
-#fixBoletoModal #fixWinnerWrap.hidden{ display:none !important; }
-#fixBoletoModal #fixWinnerWrap .winner-meta{
-  grid-template-columns:1fr;
+  display:flex;
+  flex-direction:column;
   gap:8px;
 }
+#fixBoletoModal #fixWinnerWrap.hidden{ display:none !important; }
+#fixBoletoModal #fixWinnerWrap .fix-title{
+  margin-bottom:0;
+}
+#fixBoletoModal #fixWinnerWrap .fix-sub{
+  margin-top:-2px;
+  margin-bottom:2px;
+}
+#fixBoletoModal #fixWinnerWrap .winner-meta{
+  grid-template-columns:1fr 1fr;
+  gap:6px;
+  margin-top:4px !important;
+}
 #fixBoletoModal #fixWinnerWrap .winner-meta .kv{
-  padding:8px 10px;
-  font-size:13px;
+  padding:7px 10px;
+  font-size:12px;
+  line-height:1.2;
+}
+#fixBoletoModal #fixWinnerWrap .winner-editor{
+  margin-top:2px;
+  padding:10px;
+}
+#fixBoletoModal #fixWinnerWrap .winner-editor .we-title{
+  margin-bottom:8px;
 }
 #fixBoletoModal #fixWinnerWrap .winner-editor .we-grid{
-  grid-template-columns:1fr;
+  grid-template-columns:1fr 108px;
+  gap:8px;
+}
+#fixBoletoModal #fixWinnerWrap .winner-editor textarea{
+  min-height:46px;
+}
+#fixBoletoModal #fixWinnerWrap .winner-editor .we-field.small input{
+  min-height:46px;
 }
 #fixBoletoModal #fixWinnerWrap .winner-editor .we-actions{
   justify-content:stretch;
+  gap:8px;
+  margin-top:8px;
 }
 #fixBoletoModal #fixWinnerWrap .winner-editor .we-actions .btn{
-  flex:1 1 100%;
+  flex:1 1 50%;
 }
 #fixBoletoModal #fixWinnerWrap .winner-grid{
-  max-width:250px;
+  max-width:228px;
+  margin:0 auto 2px;
+}
+#fixBoletoModal #fixWinnerWrap .wcell{
+  font-size:18px;
 }
 #fixBoletoModal #fixWinnerWrap .winner-actions{
   justify-content:stretch;
+  margin-top:2px;
 }
 #fixBoletoModal #fixWinnerWrap .winner-actions .btn{
   width:100%;
+  padding:10px 12px;
 }
 #fixBoletoModal #fixWinnerWrap .winner-quick{
-  max-height:190px;
-  overflow:auto;
-  padding-right:4px;
+  margin-top:2px;
+  max-height:none;
+  overflow:visible;
+  padding-right:0;
 }
 #fixBoletoModal #fixWinnerWrap .winner-quick .hint{
-  position:sticky;
-  top:0;
-  background:linear-gradient(180deg,rgba(16,29,54,.98),rgba(16,29,54,.90));
-  padding:0 0 8px;
-  z-index:1;
+  position:static;
+  background:none;
+  padding:0;
+  margin:0 0 6px !important;
 }
 #fixBoletoModal #fixWinnerWrap .wquick{
   display:grid;
-  grid-template-columns:1fr;
-  gap:8px;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:6px;
 }
 #fixBoletoModal #fixWinnerWrap .wchip{
-  display:block;
+  display:flex;
   width:100%;
+  min-height:32px;
   text-align:left;
+  align-items:center;
+  font-size:11px;
+  line-height:1.1;
+  padding:8px 10px;
 }
-@media (max-width: 1320px){
-  #fixBoletoModal .modal-card{ width:min(1280px, 97vw); }
+@media (max-width: 1380px){
+  #fixBoletoModal .modal-card{ width:min(1320px, 97vw); }
   #fixBoletoModal .fix-panels{ grid-template-columns:1fr 1fr; }
   #fixBoletoModal #fixWinnerWrap{
     grid-column:1 / -1;
@@ -1170,7 +1209,6 @@
   #fixBoletoModal #fixWinnerWrap .winner-editor .we-actions .btn{ flex:0 0 auto; }
   #fixBoletoModal #fixWinnerWrap .winner-actions{ justify-content:flex-end; }
   #fixBoletoModal #fixWinnerWrap .winner-actions .btn{ width:auto; }
-  #fixBoletoModal #fixWinnerWrap .winner-quick{ max-height:none; }
   #fixBoletoModal #fixWinnerWrap .wquick{ grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
 }
 @media (max-width: 920px){
