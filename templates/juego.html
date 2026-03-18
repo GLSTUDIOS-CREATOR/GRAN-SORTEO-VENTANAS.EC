@@ -1088,6 +1088,98 @@
 }
 #fixWinnerWrap .fix-sub b{ color: var(--gold); }
 
+/* ===== Corrección boleto: ganador al costado, visible y con chips de otros ganadores ===== */
+#fixBoletoModal .modal-card{
+  width:min(1480px, 97vw);
+  max-height:92vh;
+}
+#fixBoletoModal .fix-panels{
+  grid-template-columns:minmax(0,1.02fr) minmax(0,1.02fr) minmax(340px,.92fr);
+  align-items:start;
+}
+#fixBoletoModal #fixWinnerWrap{
+  margin-top:0;
+  align-self:start;
+  position:sticky;
+  top:0;
+  max-height:calc(92vh - 190px);
+  overflow:auto;
+  scrollbar-gutter:stable;
+}
+#fixBoletoModal #fixWinnerWrap.hidden{ display:none !important; }
+#fixBoletoModal #fixWinnerWrap .winner-meta{
+  grid-template-columns:1fr;
+  gap:8px;
+}
+#fixBoletoModal #fixWinnerWrap .winner-meta .kv{
+  padding:8px 10px;
+  font-size:13px;
+}
+#fixBoletoModal #fixWinnerWrap .winner-editor .we-grid{
+  grid-template-columns:1fr;
+}
+#fixBoletoModal #fixWinnerWrap .winner-editor .we-actions{
+  justify-content:stretch;
+}
+#fixBoletoModal #fixWinnerWrap .winner-editor .we-actions .btn{
+  flex:1 1 100%;
+}
+#fixBoletoModal #fixWinnerWrap .winner-grid{
+  max-width:250px;
+}
+#fixBoletoModal #fixWinnerWrap .winner-actions{
+  justify-content:stretch;
+}
+#fixBoletoModal #fixWinnerWrap .winner-actions .btn{
+  width:100%;
+}
+#fixBoletoModal #fixWinnerWrap .winner-quick{
+  max-height:190px;
+  overflow:auto;
+  padding-right:4px;
+}
+#fixBoletoModal #fixWinnerWrap .winner-quick .hint{
+  position:sticky;
+  top:0;
+  background:linear-gradient(180deg,rgba(16,29,54,.98),rgba(16,29,54,.90));
+  padding:0 0 8px;
+  z-index:1;
+}
+#fixBoletoModal #fixWinnerWrap .wquick{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:8px;
+}
+#fixBoletoModal #fixWinnerWrap .wchip{
+  display:block;
+  width:100%;
+  text-align:left;
+}
+@media (max-width: 1320px){
+  #fixBoletoModal .modal-card{ width:min(1280px, 97vw); }
+  #fixBoletoModal .fix-panels{ grid-template-columns:1fr 1fr; }
+  #fixBoletoModal #fixWinnerWrap{
+    grid-column:1 / -1;
+    position:relative;
+    top:auto;
+    max-height:none;
+  }
+  #fixBoletoModal #fixWinnerWrap .winner-meta{ grid-template-columns:1fr 1fr; }
+  #fixBoletoModal #fixWinnerWrap .winner-editor .we-grid{ grid-template-columns:1fr 150px; }
+  #fixBoletoModal #fixWinnerWrap .winner-editor .we-actions{ justify-content:flex-end; }
+  #fixBoletoModal #fixWinnerWrap .winner-editor .we-actions .btn{ flex:0 0 auto; }
+  #fixBoletoModal #fixWinnerWrap .winner-actions{ justify-content:flex-end; }
+  #fixBoletoModal #fixWinnerWrap .winner-actions .btn{ width:auto; }
+  #fixBoletoModal #fixWinnerWrap .winner-quick{ max-height:none; }
+  #fixBoletoModal #fixWinnerWrap .wquick{ grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+}
+@media (max-width: 920px){
+  #fixBoletoModal #fixWinnerWrap .winner-meta{ grid-template-columns:1fr; }
+  #fixBoletoModal #fixWinnerWrap .winner-editor .we-grid{ grid-template-columns:1fr; }
+  #fixBoletoModal #fixWinnerWrap .winner-actions .btn{ width:100%; }
+  #fixBoletoModal #fixWinnerWrap .wquick{ grid-template-columns:1fr; }
+}
+
 /* ===== FIX MODAL (corregir boleto) — cuadros + modo figura ===== */
 .fix-figrow{
   display:flex;
@@ -1614,50 +1706,50 @@
 
               <!-- El tablero 75 se muestra abajo en panel completo para mantener estética estable -->
             </div>
-          </div>
 
-          <div id="fixWinnerWrap" class="fix-panel full hidden">
-            <div class="fix-title">🏆 Ganador detectado en esta corrección</div>
-            <div class="fix-sub">Este bloque solo aparece si este boleto corregido coincide con una <b>figura ganadora</b>.</div>
+            <div id="fixWinnerWrap" class="fix-panel hidden">
+              <div class="fix-title">🏆 Ganador detectado en esta corrección</div>
+              <div class="fix-sub">Este bloque solo aparece si este boleto corregido coincide con una <b>figura ganadora</b>.</div>
 
-            <div class="winner-meta" style="margin-top:10px">
-              <div class="kv"><b>Figura:</b> <span id="fwFigura">—</span></div>
-              <div class="kv"><b>Tabla:</b> <span id="fwTabla">—</span></div>
-              <div class="kv"><b>Vendedor:</b> <span id="fwVend">—</span></div>
-              <div class="kv"><b>Planilla:</b> <span id="fwPlan">—</span></div>
-              <div class="kv"><b>Serie:</b> <span id="fwSerie">—</span></div>
-              <div class="kv"><b>Último número:</b> <span id="fwUltimo">—</span></div>
-              <div class="kv"><b>Pendientes:</b> <span id="fwCounter">0</span></div>
-              <div class="kv" style="grid-column:1/-1"><b>Números de la figura:</b> <span id="fwNums">—</span></div>
-            </div>
+              <div class="winner-meta" style="margin-top:10px">
+                <div class="kv"><b>Figura:</b> <span id="fwFigura">—</span></div>
+                <div class="kv"><b>Tabla:</b> <span id="fwTabla">—</span></div>
+                <div class="kv"><b>Vendedor:</b> <span id="fwVend">—</span></div>
+                <div class="kv"><b>Planilla:</b> <span id="fwPlan">—</span></div>
+                <div class="kv"><b>Serie:</b> <span id="fwSerie">—</span></div>
+                <div class="kv"><b>Último número:</b> <span id="fwUltimo">—</span></div>
+                <div class="kv"><b>Pendientes:</b> <span id="fwCounter">0</span></div>
+                <div class="kv"><b>Números de la figura:</b> <span id="fwNums">—</span></div>
+              </div>
 
-            <div class="winner-editor">
-              <div class="we-title">📝 Boletín / Resultado</div>
-              <div class="we-grid">
-                <div class="we-field">
-                  <label>Nombre / observación (Boletín)</label>
-                  <textarea id="fwBoletinTxt" rows="2" placeholder="Ej: Se quedó · Premio entregado · Observación..."></textarea>
+              <div class="winner-editor">
+                <div class="we-title">📝 Boletín / Resultado</div>
+                <div class="we-grid">
+                  <div class="we-field">
+                    <label>Nombre / observación (Boletín)</label>
+                    <textarea id="fwBoletinTxt" rows="2" placeholder="Ej: Se quedó · Premio entregado · Observación..."></textarea>
+                  </div>
+                  <div class="we-field small">
+                    <label>Premio ($)</label>
+                    <input id="fwPremioTxt" inputmode="decimal" placeholder="0.00">
+                  </div>
                 </div>
-                <div class="we-field small">
-                  <label>Premio ($)</label>
-                  <input id="fwPremioTxt" inputmode="decimal" placeholder="0.00">
+                <div class="we-actions">
+                  <button id="fwSaveRes" class="btn gold" type="button">💾 Guardar boletín</button>
+                  <button id="fwGoRes" class="btn ghost" type="button">📌 Ver en Resultados</button>
                 </div>
               </div>
-              <div class="we-actions">
-                <button id="fwSaveRes" class="btn gold" type="button">💾 Guardar boletín</button>
-                <button id="fwGoRes" class="btn ghost" type="button">📌 Ver en Resultados</button>
+
+              <div id="fwGrid" class="winner-grid"></div>
+
+              <div class="winner-actions">
+                <button id="fwNext" class="btn gold" type="button">SIGUIENTE GANADOR</button>
               </div>
-            </div>
 
-            <div id="fwGrid" class="winner-grid"></div>
-
-            <div class="winner-actions">
-              <button id="fwNext" class="btn gold" type="button">SIGUIENTE GANADOR</button>
-            </div>
-
-            <div class="winner-quick">
-              <div class="hint" style="margin:10px 0 0">Toca un ganador de este boleto para volver a verlo:</div>
-              <div id="fwQuick" class="wquick"></div>
+              <div class="winner-quick">
+                <div class="hint" style="margin:10px 0 0">Otros ganadores detectados en este boleto:</div>
+                <div id="fwQuick" class="wquick"></div>
+              </div>
             </div>
           </div>
 
