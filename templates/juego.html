@@ -1069,6 +1069,25 @@
 .disabled{opacity:.6;cursor:not-allowed}
 
 
+/* ===== Corrección boleto: ganador detectado dentro del modal ===== */
+#fixWinnerWrap{ margin-top:12px; }
+#fixWinnerWrap .winner-grid{
+  max-width:300px;
+  margin:10px auto 6px;
+  gap:5px;
+}
+#fixWinnerWrap .wcell{
+  border-width:1px;
+  border-radius:12px;
+  font-size:22px;
+  box-shadow:0 8px 18px rgba(0,0,0,.22);
+}
+#fixWinnerWrap .winner-actions .btn:disabled{
+  opacity:.6;
+  cursor:not-allowed;
+}
+#fixWinnerWrap .fix-sub b{ color: var(--gold); }
+
 /* ===== FIX MODAL (corregir boleto) — cuadros + modo figura ===== */
 .fix-figrow{
   display:flex;
@@ -1594,6 +1613,51 @@
               <div id="fixPreview" class="tf-preview" style="margin-top:10px"></div>
 
               <!-- El tablero 75 se muestra abajo en panel completo para mantener estética estable -->
+            </div>
+          </div>
+
+          <div id="fixWinnerWrap" class="fix-panel full hidden">
+            <div class="fix-title">🏆 Ganador detectado en esta corrección</div>
+            <div class="fix-sub">Este bloque solo aparece si este boleto corregido coincide con una <b>figura ganadora</b>.</div>
+
+            <div class="winner-meta" style="margin-top:10px">
+              <div class="kv"><b>Figura:</b> <span id="fwFigura">—</span></div>
+              <div class="kv"><b>Tabla:</b> <span id="fwTabla">—</span></div>
+              <div class="kv"><b>Vendedor:</b> <span id="fwVend">—</span></div>
+              <div class="kv"><b>Planilla:</b> <span id="fwPlan">—</span></div>
+              <div class="kv"><b>Serie:</b> <span id="fwSerie">—</span></div>
+              <div class="kv"><b>Último número:</b> <span id="fwUltimo">—</span></div>
+              <div class="kv"><b>Pendientes:</b> <span id="fwCounter">0</span></div>
+              <div class="kv" style="grid-column:1/-1"><b>Números de la figura:</b> <span id="fwNums">—</span></div>
+            </div>
+
+            <div class="winner-editor">
+              <div class="we-title">📝 Boletín / Resultado</div>
+              <div class="we-grid">
+                <div class="we-field">
+                  <label>Nombre / observación (Boletín)</label>
+                  <textarea id="fwBoletinTxt" rows="2" placeholder="Ej: Se quedó · Premio entregado · Observación..."></textarea>
+                </div>
+                <div class="we-field small">
+                  <label>Premio ($)</label>
+                  <input id="fwPremioTxt" inputmode="decimal" placeholder="0.00">
+                </div>
+              </div>
+              <div class="we-actions">
+                <button id="fwSaveRes" class="btn gold" type="button">💾 Guardar boletín</button>
+                <button id="fwGoRes" class="btn ghost" type="button">📌 Ver en Resultados</button>
+              </div>
+            </div>
+
+            <div id="fwGrid" class="winner-grid"></div>
+
+            <div class="winner-actions">
+              <button id="fwNext" class="btn gold" type="button">SIGUIENTE GANADOR</button>
+            </div>
+
+            <div class="winner-quick">
+              <div class="hint" style="margin:10px 0 0">Toca un ganador de este boleto para volver a verlo:</div>
+              <div id="fwQuick" class="wquick"></div>
             </div>
           </div>
 
@@ -2399,6 +2463,8 @@ el.appendChild(row);
       __resExtras = (jR && jR.extras) ? jR.extras : {comodin:{}, gran_bonus:{}};
 
       renderResultadosPanel(fecha, wins, items);
+      try{ if (typeof window.__reapplyWinnerEditorToRow === "function") window.__reapplyWinnerEditorToRow(); }catch(_){ }
+      try{ if (typeof window.__reapplyFixWinnerEditorToRow === "function") window.__reapplyFixWinnerEditorToRow(); }catch(_){ }
 
       // limpiar indicador de refresco pendiente
       const bRef = document.getElementById("btnRefrescarRes");
@@ -3042,6 +3108,20 @@ setInterval(fetchSpinnerState, 3000);
 
     return row;
   };
+  window.__reapplyWinnerEditorToRow = _applyWinnerEditorToRow;
+
+  const bindWinnerEditorLive = () => {
+    const tx = byId("wBoletinTxt");
+    const pr = byId("wPremioTxt");
+    if (tx && !tx.dataset.liveMirror){
+      tx.addEventListener("input", () => { try{ _applyWinnerEditorToRow(); }catch(_){ } });
+      tx.dataset.liveMirror = "1";
+    }
+    if (pr && !pr.dataset.liveMirror){
+      pr.addEventListener("input", () => { try{ _applyWinnerEditorToRow(); }catch(_){ } });
+      pr.dataset.liveMirror = "1";
+    }
+  };
 
 
   const saveWinnerEditorDirect = async () => {
@@ -3225,6 +3305,8 @@ setInterval(fetchSpinnerState, 3000);
 
   // Botones / eventos
   const bind = () => {
+    bindWinnerEditorLive();
+
     const btnNext = byId("wNext");
     const btnClose = byId("wClose");
     if (btnNext) btnNext.addEventListener("click", () => showNext());
@@ -3297,7 +3379,27 @@ const fixModal = byId("fixBoletoModal");
   const fixResetBoardBtn = byId("fixResetBoardBtn");
   const fixRefreshBoardBtn = byId("fixRefreshBoardBtn");
 
+  const fixWinnerWrap = byId("fixWinnerWrap");
+  const fwFigura = byId("fwFigura");
+  const fwTabla = byId("fwTabla");
+  const fwVend = byId("fwVend");
+  const fwPlan = byId("fwPlan");
+  const fwSerie = byId("fwSerie");
+  const fwUltimo = byId("fwUltimo");
+  const fwCounter = byId("fwCounter");
+  const fwNums = byId("fwNums");
+  const fwGrid = byId("fwGrid");
+  const fwQuick = byId("fwQuick");
+  const fwBoletinTxt = byId("fwBoletinTxt");
+  const fwPremioTxt = byId("fwPremioTxt");
+  const fwSaveRes = byId("fwSaveRes");
+  const fwGoRes = byId("fwGoRes");
+  const fwNext = byId("fwNext");
+
   const fixState = { stack: [], last: 0, total: 0, fecha: "", ultimos5: [] };
+  let fixWinnerList = [];
+  let fixWinnerIndex = 0;
+  let fixCurrentWinner = null;
 
 
   // Modo FIGURA (solo visual): rojo = figura, gris = otras marcadas
@@ -3388,6 +3490,7 @@ const fixModal = byId("fixBoletoModal");
     if (!fixModal) return;
     fixModal.classList.add("hidden");
     fixModal.setAttribute("aria-hidden", "true");
+    clearFixWinnerPanel();
     // pedir clave otra vez la próxima vez
     try{ if (fixKey) fixKey.value = ""; }catch(_){ }
   };
@@ -3568,6 +3671,250 @@ const fixModal = byId("fixBoletoModal");
     fixInfo.textContent = `${f} · Marcadas: ${fixState.total || (fixState.stack||[]).length} · Última: ${fixState.last || 0}`;
   };
 
+  const setFixWinnerVisible = (on) => {
+    if (!fixWinnerWrap) return;
+    fixWinnerWrap.classList.toggle("hidden", !on);
+  };
+
+  const clearFixWinnerPanel = () => {
+    fixWinnerList = [];
+    fixWinnerIndex = 0;
+    fixCurrentWinner = null;
+    setFixWinnerVisible(false);
+    if (fwQuick) fwQuick.innerHTML = "";
+    if (fwGrid) fwGrid.innerHTML = "";
+    if (fwCounter) fwCounter.textContent = "0";
+    if (fwBoletinTxt) fwBoletinTxt.value = "";
+    if (fwPremioTxt) fwPremioTxt.value = "";
+    if (fwNext) fwNext.disabled = true;
+  };
+
+  const cleanFixSerie = (v) => String(v || "").trim().toLowerCase().split(/[\/]/).pop();
+  const fixWinnerSerieOf = (w) => cleanFixSerie(w?.serie ?? w?.serie_archivo ?? w?.archivo ?? "");
+  const sameFixSerie = (a,b) => {
+    const aa = cleanFixSerie(a);
+    const bb = cleanFixSerie(b);
+    if (!aa || !bb) return true;
+    if (aa === bb) return true;
+    const aa0 = aa.replace(/\.(xlsx|xls|csv)$/i, "");
+    const bb0 = bb.replace(/\.(xlsx|xls|csv)$/i, "");
+    return aa0 === bb0;
+  };
+
+  const winnerMatchesFixTicket = (w) => {
+    const carton = normCell(fixCarton?.value);
+    const serie = normCell(fixSerie?.value);
+    const boleto = String(w?.tabla ?? w?.boleto ?? "").trim();
+    if (!carton || !boleto || boleto !== carton) return false;
+    return sameFixSerie(serie, fixWinnerSerieOf(w));
+  };
+
+  const renderFixWinnerGrid = (w) => {
+    if (!fwGrid) return;
+    fwGrid.innerHTML = "";
+
+    const cols = ["B", "I", "N", "G", "O"];
+    const required = new Set((w?.required_pos || []).map(String));
+    const markedNums = new Set((w?.marcados_nums || []).map(n => String(n)));
+    const lastWin = (w?.ultima_bola != null ? String(w.ultima_bola) : '');
+    const grid = w?.grid || [];
+
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 5; c++) {
+        const pos = cols[c] + String(r + 1);
+        const num = (grid[r] || [])[c];
+
+        const cell = document.createElement("div");
+        cell.className = "wcell";
+
+        const isFree = (pos === "N3") && (!num || Number(num) === 0);
+        if (isFree) {
+          cell.classList.add("free");
+          cell.textContent = "QR";
+        } else {
+          cell.textContent = (num === null || num === undefined) ? "" : String(num);
+        }
+
+        if (required.has(pos)) cell.classList.add("req");
+        if (!isFree && num && markedNums.has(String(num))) cell.classList.add("marked");
+        if (!isFree && lastWin && String(num) === lastWin) cell.classList.add("lastwin");
+
+        fwGrid.appendChild(cell);
+      }
+    }
+  };
+
+  const updateFixWinnerCounter = () => {
+    const pending = Math.max(0, (fixWinnerList?.length || 0) - 1);
+    if (fwCounter) fwCounter.textContent = String(pending);
+    if (fwNext) fwNext.disabled = (fixWinnerList.length <= 1);
+  };
+
+  const renderFixWinnerQuick = () => {
+    if (!fwQuick) return;
+    fwQuick.innerHTML = "";
+    (fixWinnerList || []).forEach((w, idx) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "wchip" + (idx === fixWinnerIndex ? " active" : "");
+      const fig = String(w?.figura || "").trim();
+      const tab = String(w?.tabla || w?.boleto || "").trim();
+      b.textContent = `${fig} • #${tab}`;
+      b.addEventListener("click", () => {
+        fixWinnerIndex = idx;
+        renderFixWinnerCurrent();
+      });
+      fwQuick.appendChild(b);
+    });
+  };
+
+  const syncFixWinnerEditor = () => {
+    if (!fwBoletinTxt || !fwPremioTxt || !fixCurrentWinner) return;
+    const fig = String(fixCurrentWinner.figura || "").trim();
+    const boleto = String(fixCurrentWinner.tabla || fixCurrentWinner.boleto || "").trim();
+    const row = _findResRow(fig, boleto);
+    if (row) {
+      fwBoletinTxt.value = row.querySelector(".res-nombre")?.value ?? "";
+      fwPremioTxt.value = row.querySelector(".res-premio")?.value ?? "";
+    } else {
+      fwBoletinTxt.value = String(fixCurrentWinner.nota || fixCurrentWinner.nombre || "");
+      const vv = (fixCurrentWinner.valor !== undefined && fixCurrentWinner.valor !== null) ? fixCurrentWinner.valor : "";
+      fwPremioTxt.value = (vv === "" ? "" : String(vv));
+    }
+  };
+  window.syncFixWinnerEditor = syncFixWinnerEditor;
+
+  const applyFixWinnerEditorToRow = () => {
+    if (!fwBoletinTxt || !fwPremioTxt || !fixCurrentWinner) return null;
+    const fig = String(fixCurrentWinner.figura || "").trim();
+    const boleto = String(fixCurrentWinner.tabla || fixCurrentWinner.boleto || "").trim();
+    const row = _findResRow(fig, boleto);
+    if (!row) return null;
+
+    const inNombre = row.querySelector(".res-nombre");
+    const inPremio = row.querySelector(".res-premio");
+    if (inNombre) inNombre.value = fwBoletinTxt.value;
+    if (inPremio) inPremio.value = fwPremioTxt.value;
+
+    row.classList.add("flash");
+    setTimeout(() => row.classList.remove("flash"), 900);
+    return row;
+  };
+  window.__reapplyFixWinnerEditorToRow = applyFixWinnerEditorToRow;
+
+  const bindFixWinnerEditorLive = () => {
+    if (fwBoletinTxt && !fwBoletinTxt.dataset.liveMirror){
+      fwBoletinTxt.addEventListener("input", () => { try{ applyFixWinnerEditorToRow(); }catch(_){ } });
+      fwBoletinTxt.dataset.liveMirror = "1";
+    }
+    if (fwPremioTxt && !fwPremioTxt.dataset.liveMirror){
+      fwPremioTxt.addEventListener("input", () => { try{ applyFixWinnerEditorToRow(); }catch(_){ } });
+      fwPremioTxt.dataset.liveMirror = "1";
+    }
+  };
+
+  const saveFixWinnerEditorDirect = async () => {
+    if (!fixCurrentWinner || !fwBoletinTxt || !fwPremioTxt) {
+      alert("No hay ganador detectado para este boleto.");
+      return false;
+    }
+
+    applyFixWinnerEditorToRow();
+
+    try {
+      const fd = new FormData();
+      fd.append("figura", String(fixCurrentWinner.figura || ""));
+      fd.append("boleto", String(fixCurrentWinner.tabla || fixCurrentWinner.boleto || ""));
+      fd.append("nombre", String(fwBoletinTxt.value || ""));
+      fd.append("premio", String(fwPremioTxt.value || ""));
+
+      const r = await fetch('/api/resultados/upsert-ganador', { method:'POST', body: fd });
+      const j = await r.json().catch(()=>({ok:false,msg:'Respuesta inválida'}));
+      if (!j.ok) throw new Error(j.msg || 'No se pudo guardar');
+
+      if (typeof window.refreshResultadosPanel === 'function') {
+        try { await window.refreshResultadosPanel(); } catch(_){ }
+      }
+      try { await refreshFixWinnerPanel({keepCurrent:true}); } catch(_){ }
+      try { await pollGanadores(); } catch(_){ }
+
+      applyFixWinnerEditorToRow();
+      return true;
+    } catch (e) {
+      try {
+        if (typeof guardarResultadosPanel === 'function') {
+          await guardarResultadosPanel();
+          return true;
+        }
+      } catch(_){ }
+      alert(e?.message || 'No se pudo sincronizar el ganador.');
+      return false;
+    }
+  };
+
+  const renderFixWinnerCurrent = () => {
+    if (!Array.isArray(fixWinnerList) || !fixWinnerList.length) {
+      clearFixWinnerPanel();
+      return;
+    }
+
+    if (fixWinnerIndex < 0) fixWinnerIndex = 0;
+    if (fixWinnerIndex >= fixWinnerList.length) fixWinnerIndex = 0;
+
+    const w = fixWinnerList[fixWinnerIndex];
+    fixCurrentWinner = w;
+    setFixWinnerVisible(true);
+
+    const val = (w?.valor !== undefined && w?.valor !== null) ? ` ($${w.valor})` : "";
+    if (fwFigura) fwFigura.textContent = `${w?.figura || ""}${val}`;
+    if (fwTabla) fwTabla.textContent = `#${w?.tabla || w?.boleto || ""}`;
+    if (fwVend) fwVend.textContent = (w?.vendedor || "—");
+    if (fwPlan) fwPlan.textContent = (w?.planilla || w?.rango || w?.sector || "—");
+    if (fwSerie) fwSerie.textContent = (w?.serie || w?.serie_archivo || "");
+    if (fwUltimo) fwUltimo.textContent = String(w?.ultima_bola ?? "");
+    if (fwNums) fwNums.textContent = ((w?.numeros_figura || []).map(String).join(", ")) || "";
+
+    renderFixWinnerGrid(w);
+    syncFixWinnerEditor();
+    updateFixWinnerCounter();
+    renderFixWinnerQuick();
+  };
+
+  const refreshFixWinnerPanel = async (opts = {}) => {
+    const carton = normCell(fixCarton?.value);
+    const serie = normCell(fixSerie?.value);
+    if (!carton || !serie) {
+      clearFixWinnerPanel();
+      return [];
+    }
+
+    let wins = Array.isArray(opts.list) ? opts.list : null;
+    if (!wins) {
+      const j = await safeFetch('/juego/ganadores' + bust());
+      wins = (j && Array.isArray(j.ganadores)) ? j.ganadores : (Array.isArray(window.__ganadoresCache) ? window.__ganadoresCache : []);
+      if (Array.isArray(wins)) window.__ganadoresCache = wins;
+    }
+
+    const matches = (wins || []).filter(w => winnerMatchesFixTicket(w));
+    if (!matches.length) {
+      clearFixWinnerPanel();
+      return [];
+    }
+
+    const currentKey = opts.keepCurrent && fixCurrentWinner ? makeKey(fixCurrentWinner) : "";
+    fixWinnerList = matches;
+
+    if (currentKey) {
+      const idx = matches.findIndex(w => makeKey(w) === currentKey);
+      fixWinnerIndex = idx >= 0 ? idx : 0;
+    } else {
+      fixWinnerIndex = 0;
+    }
+
+    renderFixWinnerCurrent();
+    return matches;
+  };
+
   const refreshFixEstado = async () => {
     try{
       let st = await safeFetch(`/juego/admin/boletos/estado${bust()}`);
@@ -3584,6 +3931,7 @@ const fixModal = byId("fixBoletoModal");
     }catch(_){ }
     try{ renderFixBoard75(); }catch(_){ }
     try{ renderPreview(); }catch(_){ }
+    try{ await refreshFixWinnerPanel({keepCurrent:true}); }catch(_){ }
   };
 
   const renderFixBoard75 = () => {
@@ -3715,6 +4063,7 @@ const fixModal = byId("fixBoletoModal");
     applyFixPanelPayload(j);
     renderFixBoard75();
     renderPreview();
+    await refreshFixWinnerPanel({keepCurrent:false});
     if (j.has_correction) {
       fixInfo.textContent = `${fixInfo.textContent} · ⚠ Este boleto ya tenía una corrección guardada.`;
     }
@@ -3735,13 +4084,31 @@ const fixModal = byId("fixBoletoModal");
     renderPreview();
 
     // refresca ganadores/resultados si existe
-    try{ if (typeof pollGanadores === "function") pollGanadores(); }catch(_){}
-    try{ if (typeof window.refreshResultadosPanel === "function") window.refreshResultadosPanel(); }catch(_){}
+    try{ if (typeof pollGanadores === "function") await pollGanadores(); }catch(_){ }
+    try{ if (typeof window.refreshResultadosPanel === "function") await window.refreshResultadosPanel(); }catch(_){ }
+    try{ await refreshFixWinnerPanel({keepCurrent:true}); }catch(_){ }
 
     alert("✅ Corrección guardada y motor recalculado.");
   };
 
   const bindFixBoleto = () => {
+    bindFixWinnerEditorLive();
+
+    if (fwSaveRes) fwSaveRes.addEventListener("click", async () => {
+      await saveFixWinnerEditorDirect();
+    });
+    if (fwGoRes) fwGoRes.addEventListener("click", () => {
+      const row = applyFixWinnerEditorToRow() || null;
+      const panel = document.getElementById("panelResultados") || document.querySelector(".results");
+      if (panel) panel.scrollIntoView({behavior:"smooth", block:"start"});
+      if (row) row.scrollIntoView({behavior:"smooth", block:"center"});
+    });
+    if (fwNext) fwNext.addEventListener("click", () => {
+      if (!fixWinnerList.length) return;
+      fixWinnerIndex = (fixWinnerIndex + 1) % fixWinnerList.length;
+      renderFixWinnerCurrent();
+    });
+
     if (fixBtnOpen) fixBtnOpen.addEventListener("click", () => {
       // abrir inmediato: primero pide clave, luego despliega el modal de corrección
       showFixAuth();
