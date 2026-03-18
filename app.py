@@ -1697,7 +1697,8 @@ def _try_draw_qr_on_canvas(c, data, x, y, size):
         if total <= 0:
             return False
 
-        module = max(1.0, float(size) / float(total))
+        size = max(float(size), 1.0)
+        module = size / float(total)
         qr_size = module * total
         ox = x + (size - qr_size) / 2.0
         oy = y + (size - qr_size) / 2.0
