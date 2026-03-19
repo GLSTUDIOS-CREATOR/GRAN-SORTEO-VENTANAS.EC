@@ -13053,6 +13053,8 @@ def _get_cartones_index_cached(fecha_iso: str, serie_archivo: str, merged, df, i
 
     tickets = []
     by_num = defaultdict(list)
+    by_id_exact = {}
+    by_id_num = {}
 
     for s, e in merged_sig:
         if s < 0: s = 0
@@ -13086,16 +13088,29 @@ def _get_cartones_index_cached(fecha_iso: str, serie_archivo: str, merged, df, i
                 "pos_map": pos_map,
                 "nums": nums_in_carton
             })
+            if carton_id:
+                by_id_exact[str(carton_id).strip()] = tidx
+                try:
+                    by_id_num[int(re.sub(r"\D", "", str(carton_id)) or 0)] = tidx
+                except Exception:
+                    pass
             for n in nums_in_carton:
                 by_num[n].append(tidx)
 
+    payload = {
+        "tickets": tickets,
+        "by_num": dict(by_num),
+        "by_id_exact": by_id_exact,
+        "by_id_num": by_id_num,
+    }
+
     with _CARTONES_INDEX_LOCK:
-        _CARTONES_INDEX_CACHE[key] = {"tickets": tickets, "by_num": dict(by_num)}
+        _CARTONES_INDEX_CACHE[key] = payload
         # límite simple para evitar crecimiento infinito
         if len(_CARTONES_INDEX_CACHE) > 20:
             _CARTONES_INDEX_CACHE.clear()
 
-    return tickets, dict(by_num)
+    return payload["tickets"], payload["by_num"]
 
 def _clear_juego_caches():
     """Útil si quieres limpiar manualmente la caché (por ejemplo al resetear)."""
@@ -16335,16 +16350,56 @@ except Exception as _e:
 
 CORRECCIONES_BOLETOS_JSON = _hf_abs(BASE_DIR, "DATA", "static", "db", "correcciones_boletos.json")
 
+try:
+    _CORR_JSON_CACHE  # noqa
+except NameError:
+    _CORR_JSON_CACHE = {"path": "", "mtime": None, "data": {}}
+    _CORR_JSON_LOCK = RLock()
+    _CORR_VERSION = 0
+    _CARTONES_CORR_CACHE = {}
+    _CARTONES_CORR_LOCK = RLock()
+
 def _corr_paths():
     return _hf_db_file_candidates(CORRECCIONES_BOLETOS_JSON) or [CORRECCIONES_BOLETOS_JSON]
+
+def _corr_cache_bump():
+    global _CORR_VERSION
+    try:
+        with _CORR_JSON_LOCK:
+            _CORR_VERSION += 1
+            _CORR_JSON_CACHE["mtime"] = None
+    except Exception:
+        pass
+    try:
+        with _CARTONES_CORR_LOCK:
+            _CARTONES_CORR_CACHE.clear()
+    except Exception:
+        pass
 
 def _read_correcciones():
     srcp = _hf_pick_newest_file(_corr_paths())
     if not srcp:
         return {}
     try:
+        mtime = os.path.getmtime(srcp)
+    except Exception:
+        mtime = None
+    try:
+        with _CORR_JSON_LOCK:
+            if _CORR_JSON_CACHE.get("path") == srcp and _CORR_JSON_CACHE.get("mtime") == mtime:
+                data = _CORR_JSON_CACHE.get("data") or {}
+                return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    try:
         data = _safe_json_read(srcp) or {}
-        return data if isinstance(data, dict) else {}
+        data = data if isinstance(data, dict) else {}
+        try:
+            with _CORR_JSON_LOCK:
+                _CORR_JSON_CACHE.update({"path": srcp, "mtime": mtime, "data": data})
+        except Exception:
+            pass
+        return data
     except Exception:
         return {}
 
@@ -16352,10 +16407,21 @@ def _write_correcciones(data):
     try:
         cands = _corr_paths()
         can = cands[0]
-        _safe_json_write(can, data if isinstance(data, dict) else {})
+        payload = data if isinstance(data, dict) else {}
+        _safe_json_write(can, payload)
         srcp = _hf_pick_newest_file(cands) or can
         for p in cands:
             _hf_copy_file(srcp, p)
+        try:
+            with _CORR_JSON_LOCK:
+                _CORR_JSON_CACHE.update({
+                    "path": srcp,
+                    "mtime": (os.path.getmtime(srcp) if os.path.exists(srcp) else None),
+                    "data": payload,
+                })
+        except Exception:
+            pass
+        _corr_cache_bump()
     except Exception:
         pass
 
@@ -16426,43 +16492,67 @@ try:
         """
         Wrapper de correcciones de boletos SIN romper la firma original.
         Soporta tanto la versión optimizada (6 args) como una versión simple (2 args).
+        Ahora reutiliza caché corregida para no reconstruir todos los cartones en cada consulta/recálculo.
         """
         tickets, by_num = _orig_get_cartones_index_cached(*args, **kwargs)
 
-        # Extrae fecha y serie desde args/kwargs de forma compatible
         fecha_iso = kwargs.get("fecha_iso") if isinstance(kwargs, dict) else None
         serie_archivo = kwargs.get("serie_archivo") if isinstance(kwargs, dict) else None
+        merged = kwargs.get("merged") if isinstance(kwargs, dict) else None
+        mtime = kwargs.get("mtime") if isinstance(kwargs, dict) else None
         if fecha_iso is None and len(args) >= 1:
             fecha_iso = args[0]
         if serie_archivo is None and len(args) >= 2:
             serie_archivo = args[1]
+        if merged is None and len(args) >= 3:
+            merged = args[2]
+        if mtime is None and len(args) >= 6:
+            mtime = args[5]
 
         try:
             corr_all = ((_read_correcciones().get(str(fecha_iso), {}) or {}).get(str(serie_archivo), {}) or {})
             if not corr_all:
                 return tickets, by_num
 
+            merged_sig = tuple((int(s), int(e)) for s, e in (merged or [])) if merged is not None else ()
+            corr_key = (str(fecha_iso), str(serie_archivo), merged_sig, float(mtime or 0.0), int(_CORR_VERSION))
+            try:
+                with _CARTONES_CORR_LOCK:
+                    cc = _CARTONES_CORR_CACHE.get(corr_key)
+                    if cc:
+                        return cc["tickets"], cc["by_num"]
+            except Exception:
+                pass
+
             new_tickets = []
-            for t in (tickets or []):
+            new_by = {}
+            for idx, t in enumerate(tickets or []):
                 tc = dict(t)
-                cid = str(tc.get("carton_id", ""))
+                cid = str(tc.get("carton_id", "")).strip()
                 corr = corr_all.get(cid) or {}
                 if corr:
-                    g2, pm = _corr_apply_to_grid(tc.get("grid"), tc.get("pos_map") or {}, corr)
+                    base_grid = tc.get("grid") or []
+                    base_pos = tc.get("pos_map") or {}
+                    g2, pm = _corr_apply_to_grid(base_grid, base_pos, corr)
                     tc["grid"] = g2
                     tc["pos_map"] = pm
                     tc["nums"] = _ticket_nums_from_grid(g2)
                     tc["__corregido__"] = True
                 new_tickets.append(tc)
-
-            new_by = {}
-            for idx, t in enumerate(new_tickets):
-                for n in (t.get("nums") or set()):
+                for n in (tc.get("nums") or set()):
                     try:
                         nn = int(n)
                     except Exception:
                         continue
                     new_by.setdefault(nn, []).append(idx)
+
+            try:
+                with _CARTONES_CORR_LOCK:
+                    _CARTONES_CORR_CACHE[corr_key] = {"tickets": new_tickets, "by_num": new_by}
+                    if len(_CARTONES_CORR_CACHE) > 20:
+                        _CARTONES_CORR_CACHE.clear()
+            except Exception:
+                pass
 
             return new_tickets, new_by
         except Exception as _corr_e:
@@ -16583,17 +16673,33 @@ def _juego_ticket_info(fecha, serie_archivo, carton_id):
     found = None
     try:
         tickets, _ = _get_cartones_index_cached(str(fecha), str(serie_archivo), merged, df, idcol, mtime)
-        for t in (tickets or []):
-            tid = str(t.get("carton_id", "")).strip()
-            if tid == cid:
-                found = t
-                break
-            try:
-                if int(re.sub(r"\D", "", tid) or 0) == int(re.sub(r"\D", "", cid) or 0):
+        cache_key = (str(fecha), str(serie_archivo), tuple((int(s), int(e)) for s, e in merged), float(mtime))
+        idx = None
+        try:
+            with _CARTONES_INDEX_LOCK:
+                base_cache = _CARTONES_INDEX_CACHE.get(cache_key) or {}
+                idx = (base_cache.get("by_id_exact") or {}).get(cid)
+                if idx is None:
+                    try:
+                        idx = (base_cache.get("by_id_num") or {}).get(int(re.sub(r"\D", "", cid) or 0))
+                    except Exception:
+                        idx = None
+        except Exception:
+            idx = None
+        if idx is not None and 0 <= idx < len(tickets or []):
+            found = tickets[idx]
+        else:
+            for t in (tickets or []):
+                tid = str(t.get("carton_id", "")).strip()
+                if tid == cid:
                     found = t
                     break
-            except Exception:
-                pass
+                try:
+                    if int(re.sub(r"\D", "", tid) or 0) == int(re.sub(r"\D", "", cid) or 0):
+                        found = t
+                        break
+                except Exception:
+                    pass
     except Exception:
         found = None
 
@@ -16738,8 +16844,7 @@ def _hf_admin_boletos_get():
         return jsonify(ok=False, error=err), 404
     corr = _corr_get(fecha, serie_archivo, carton_id) or {}
     try:
-        df = _read_df_for_series(serie_archivo)
-        idcol = str(df.columns[0])
+        df, idcol, _ids, _id_to_idx, _mtime = _get_series_meta_cached(serie_archivo)
         m = df[df[idcol].astype(str).str.strip() == str(carton_id).strip()]
         if m is None or m.empty:
             n = int(re.sub(r"\D", "", str(carton_id)) or 0)
@@ -16810,10 +16915,8 @@ def _hf_admin_boletos_save():
     }
     _corr_set(fecha, serie_archivo, carton_id, payload)
 
-    try:
-        _clear_juego_caches()
-    except Exception:
-        pass
+    # No limpiamos las caches base de series/cartones: las correcciones se aplican por overlay
+    # y eso evita reconstruir miles de cartones innecesariamente en cada guardado.
     try:
         stack = _read_stack() or []
         ultimo = int(stack[-1]) if stack else 0
