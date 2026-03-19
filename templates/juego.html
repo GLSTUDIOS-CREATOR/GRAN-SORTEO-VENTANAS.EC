@@ -1266,7 +1266,17 @@
 #fixGrid input.free{ background:#ffffff !important; color:#666 !important; border-style:dashed !important; }
 #fixGrid input.need{ background:#e6ebf5 !important; color:#111 !important; border-color:#ff1f2d !important; box-shadow: inset 0 0 0 2px rgba(255,31,45,.45) !important; }
 #fixGrid input.off{ background:#e6ebf5 !important; color:#111 !important; border-color: rgba(0,0,0,.10) !important; }
-
+#fixGrid input.duplicate{
+  background:linear-gradient(180deg,#8cffb0,#23d18b) !important;
+  color:#062115 !important;
+  border-color:#23d18b !important;
+  box-shadow:0 0 0 3px rgba(35,209,139,.20), 0 10px 26px rgba(0,0,0,.20) !important;
+}
+#fixPreview .wcell.duplicate{
+  background:linear-gradient(180deg,#8cffb0,#23d18b) !important;
+  color:#062115 !important;
+  border-color:#23d18b !important;
+}
 
 #fixGrid input:focus{
   box-shadow:0 0 0 4px rgba(252,197,47,.16) !important;
@@ -3711,6 +3721,18 @@ const fixModal = byId("fixBoletoModal");
     return out;
   };
 
+  const getFixDuplicateSet = (grid) => {
+    const counts = new Map();
+    (grid || []).forEach(row => (row || []).forEach(v => {
+      const s = normCell(v);
+      if (!s || isFree(s) || !/^\d+$/.test(s)) return;
+      counts.set(s, (counts.get(s) || 0) + 1);
+    }));
+    return new Set(Array.from(counts.entries()).filter(([,qty]) => qty > 1).map(([num]) => num));
+  };
+
+  const getFixDuplicateList = (grid) => Array.from(getFixDuplicateSet(grid)).sort((a,b)=>(parseInt(a,10)||0)-(parseInt(b,10)||0));
+
   const renderPreview = () => {
     if (!fixPreview) return;
 
@@ -3720,9 +3742,11 @@ const fixModal = byId("fixBoletoModal");
     const calledSet = new Set((fixState.stack||[]).map(x => String(x)));
     const lastStr = fixState.last != null ? String(fixState.last) : "";
 
+    const duplicateSet = getFixDuplicateSet(g);
+
     // Limpia clases de inputs y aplica según modo
     $$("input", fixGrid).forEach(inp => {
-      inp.classList.remove("req","notout","lastwin","free","need","off");
+      inp.classList.remove("req","notout","lastwin","free","need","off","duplicate");
     });
 
     // Si hay figura seleccionada y shape cargado => modo FIGURA
@@ -3791,6 +3815,11 @@ const fixModal = byId("fixBoletoModal");
             d.classList.add("notout");
             if (inp) inp.classList.add("notout");
           }
+        }
+
+        if (!free && isNum && duplicateSet.has(vStr)){
+          d.classList.add("duplicate");
+          if (inp) inp.classList.add("duplicate");
         }
 
         fixPreview.appendChild(d);
@@ -4209,6 +4238,12 @@ const fixModal = byId("fixBoletoModal");
     if (!carton_id) throw new Error("Ingresa el # de boleto/cartón.");
 
     const grid = readGridInputs();
+    const duplicated = getFixDuplicateList(grid);
+    if (duplicated.length){
+      renderPreview();
+      throw new Error("Hay números repetidos en el boleto: " + duplicated.join(", ") + ". Corrígelos antes de guardar.");
+    }
+
     const j = await postJSON("/juego/admin/boletos/save", {key, serie_archivo, carton_id, motivo, grid});
     await refreshFixEstado();
     renderPreview();
