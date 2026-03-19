@@ -4194,7 +4194,7 @@ const fixModal = byId("fixBoletoModal");
     applyFixPanelPayload(j);
     renderFixBoard75();
     renderPreview();
-    await refreshFixWinnerPanel({keepCurrent:false});
+    setTimeout(() => { try{ refreshFixWinnerPanel({keepCurrent:false}); }catch(_){ } }, 0);
     if (j.has_correction) {
       fixInfo.textContent = `${fixInfo.textContent} · ⚠ Este boleto ya tenía una corrección guardada.`;
     }
@@ -4214,12 +4214,14 @@ const fixModal = byId("fixBoletoModal");
     await refreshFixEstado({skipWinnerPanel:true});
     renderPreview();
 
-    // refresca ganadores/resultados si existe
-    try{ if (typeof pollGanadores === "function") await pollGanadores(); }catch(_){ }
-    try{ if (typeof window.refreshResultadosPanel === "function") await window.refreshResultadosPanel(); }catch(_){ }
-    try{ await refreshFixWinnerPanel({keepCurrent:true}); }catch(_){ }
+    // refresca ganadores/resultados sin bloquear la UI
+    setTimeout(async () => {
+      try{ if (typeof pollGanadores === "function") await pollGanadores(); }catch(_){ }
+      try{ if (typeof window.refreshResultadosPanel === "function") await window.refreshResultadosPanel(); }catch(_){ }
+      try{ await refreshFixWinnerPanel({keepCurrent:true}); }catch(_){ }
+    }, 0);
 
-    alert("✅ Corrección guardada y motor recalculado.");
+    alert(j && j.fast_path ? "✅ Corrección guardada." : "✅ Corrección guardada y motor recalculado.");
   };
 
   const bindFixBoleto = () => {
@@ -4265,7 +4267,7 @@ const fixModal = byId("fixBoletoModal");
         await new Promise(r => requestAnimationFrame(() => r()));
 
         buildGridInputs(null);
-        await refreshFixEstado();
+        await refreshFixEstado({skipWinnerPanel:true});
         renderPreview();
 
       }catch(e){
@@ -4310,7 +4312,7 @@ const fixModal = byId("fixBoletoModal");
     });
 
     if (fixLoad) fixLoad.addEventListener("click", async () => {
-      try{ await refreshFixMeta(); await loadBoleto(); }
+      try{ await loadBoleto(); }
       catch(e){ alert("❌ " + (e.message || e)); }
     });
 
@@ -4371,7 +4373,6 @@ const fixModal = byId("fixBoletoModal");
     const btn = document.getElementById("fixLoad");
     if (btn){ btn.disabled = true; btn.classList.add("disabled"); }
     try{
-      await refreshFixMeta();
       await loadBoleto();
     }catch(e){
       alert("❌ " + (e && (e.message||e) ? (e.message||e) : "Error"));
