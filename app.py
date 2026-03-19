@@ -16824,6 +16824,59 @@ def _hf_admin_boletos_meta():
     series = _juego_series_en_juego(fecha)
     return jsonify(ok=True, fecha=fecha, series=series)
 
+
+def _ticket_original_grid_fast(serie_archivo, carton_id):
+    """Obtiene la grilla ORIGINAL del boleto usando la caché de la serie, sin tocar el motor de juego."""
+    cid = str(carton_id or "").strip()
+    if not cid:
+        return None
+    try:
+        df, idcol, ids, id_to_idx, _mtime = _get_series_meta_cached(serie_archivo)
+        idx = id_to_idx.get(cid)
+        if idx is None:
+            try:
+                cid_num = int(re.sub(r"\D", "", cid) or 0)
+            except Exception:
+                cid_num = None
+            if cid_num is not None:
+                for i, vv in enumerate(ids or []):
+                    try:
+                        if int(re.sub(r"\D", "", str(vv)) or 0) == cid_num:
+                            idx = i
+                            break
+                    except Exception:
+                        continue
+        if idx is None:
+            return None
+        row = df.iloc[int(idx)]
+        row_lower = {str(c).strip().lower(): row[c] for c in df.columns}
+        grid, _ = _build_grid_from_row(row_lower)
+        return grid
+    except Exception:
+        return None
+
+
+def _ticket_has_winner_for_day(fecha_iso, serie_archivo, carton_id):
+    """True si ese boleto ya figura como ganador hoy."""
+    fecha_iso = str(fecha_iso)
+    serie_archivo = str(serie_archivo or "").strip()
+    tabla = _norm_tabla_id(carton_id)
+    try:
+        data = _safe_json_read(GANADORES_JSON) or {}
+        for g in (data.get(fecha_iso) or []):
+            if not isinstance(g, dict):
+                continue
+            try:
+                gserie = str(g.get('serie') or '').strip()
+                gtabla = _norm_tabla_id(g.get('tabla') or g.get('boleto') or '')
+                if gtabla == tabla and (_serie_equal(gserie, serie_archivo) if gserie and serie_archivo else gserie == serie_archivo):
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
 @app.post("/juego/admin/boletos/get")
 def _hf_admin_boletos_get():
     data = request.get_json(silent=True) or request.form or {}
@@ -16844,17 +16897,7 @@ def _hf_admin_boletos_get():
         return jsonify(ok=False, error=err), 404
     corr = _corr_get(fecha, serie_archivo, carton_id) or {}
     try:
-        df, idcol, _ids, _id_to_idx, _mtime = _get_series_meta_cached(serie_archivo)
-        m = df[df[idcol].astype(str).str.strip() == str(carton_id).strip()]
-        if m is None or m.empty:
-            n = int(re.sub(r"\D", "", str(carton_id)) or 0)
-            m = df[pd.to_numeric(df[idcol], errors="coerce").fillna(-1).astype(int) == n]
-        if m is not None and not m.empty:
-            row = m.iloc[0]
-            row_lower = {str(c).strip().lower(): row[c] for c in df.columns}
-            orig_grid, _ = _build_grid_from_row(row_lower)
-        else:
-            orig_grid = payload.get("grid")
+        orig_grid = _ticket_original_grid_fast(serie_archivo, carton_id) or payload.get("grid")
     except Exception:
         orig_grid = payload.get("grid")
     stack = _read_stack() or []
@@ -16907,6 +16950,11 @@ def _hf_admin_boletos_save():
     except Exception:
         pass
 
+    prev_corr = _corr_get(fecha, serie_archivo, carton_id) or {}
+    old_grid = prev_corr.get("grid") if isinstance(prev_corr, dict) else None
+    if not old_grid:
+        old_grid = _ticket_original_grid_fast(serie_archivo, carton_id)
+
     payload = {
         "grid": grid,
         "motivo": motivo,
@@ -16915,10 +16963,31 @@ def _hf_admin_boletos_save():
     }
     _corr_set(fecha, serie_archivo, carton_id, payload)
 
+    # Fast path seguro: si no cambió ningún número YA marcado del boleto y ese boleto no figura
+    # hoy como ganador, no hace falta recalcular todo el juego.
+    try:
+        old_nums = _ticket_nums_from_grid(old_grid or [])
+        new_nums = _ticket_nums_from_grid(grid or [])
+        stack = _read_stack() or []
+        marked_now = set()
+        for _n in (stack or []):
+            try:
+                _ni = int(str(_n).strip())
+                if 1 <= _ni <= 75:
+                    marked_now.add(_ni)
+            except Exception:
+                pass
+        touched_marked = bool((old_nums ^ new_nums) & marked_now)
+        impacted_winner = _ticket_has_winner_for_day(str(fecha), str(serie_archivo), str(carton_id))
+        if (not touched_marked) and (not impacted_winner):
+            return jsonify(ok=True, msg="Corrección guardada", fecha=fecha, fast_path=True)
+    except Exception:
+        stack = _read_stack() or []
+
     # No limpiamos las caches base de series/cartones: las correcciones se aplican por overlay
     # y eso evita reconstruir miles de cartones innecesariamente en cada guardado.
     try:
-        stack = _read_stack() or []
+        stack = stack if 'stack' in locals() else (_read_stack() or [])
         ultimo = int(stack[-1]) if stack else 0
         ganadores_total, _ = _recalcular_ganadores(str(fecha), stack, ultimo)
         _sync_resultados_from_juego(str(fecha), ganadores_total)
@@ -16938,7 +17007,7 @@ def _hf_admin_boletos_save():
     except Exception as _e:
         return jsonify(ok=True, warning=f"Corrección guardada, pero no se pudo recalcular: {_e}")
 
-    return jsonify(ok=True, msg="Corrección guardada y juego recalculado", fecha=fecha)
+    return jsonify(ok=True, msg="Corrección guardada y juego recalculado", fecha=fecha, fast_path=False)
 
 @app.get("/juego/admin/boletos/estado")
 def _hf_admin_boletos_estado():
