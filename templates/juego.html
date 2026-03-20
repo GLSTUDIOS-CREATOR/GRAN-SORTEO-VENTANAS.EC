@@ -1266,6 +1266,9 @@
 #fixGrid input.free{ background:#ffffff !important; color:#666 !important; border-style:dashed !important; }
 #fixGrid input.need{ background:#e6ebf5 !important; color:#111 !important; border-color:#ff1f2d !important; box-shadow: inset 0 0 0 2px rgba(255,31,45,.45) !important; }
 #fixGrid input.off{ background:#e6ebf5 !important; color:#111 !important; border-color: rgba(0,0,0,.10) !important; }
+#fixGrid input.dup{ background:#18a957 !important; color:#fff !important; border-color:#18a957 !important; box-shadow: inset 0 0 0 2px rgba(255,255,255,.18), 0 10px 26px rgba(24,169,87,.24) !important; }
+
+.wcell.dup{ background:#18a957 !important; color:#fff !important; border-color:#18a957 !important; box-shadow:0 8px 22px rgba(24,169,87,.24) !important; }
 
 
 #fixGrid input:focus{
@@ -3711,6 +3714,23 @@ const fixModal = byId("fixBoletoModal");
     return out;
   };
 
+  const findFixDuplicates = (grid) => {
+    const counts = new Map();
+    const cells = [];
+    for (let r=0; r<5; r++){
+      for (let c=0; c<5; c++){
+        const v = normCell(grid?.[r]?.[c] ?? "");
+        const s = String(v);
+        if (!s || isFree(s) || !/^\d+$/.test(s)) continue;
+        counts.set(s, (counts.get(s) || 0) + 1);
+        cells.push({r,c,s});
+      }
+    }
+    const dupVals = new Set([...counts.entries()].filter(([,n]) => n > 1).map(([k]) => k));
+    const dupPos = new Set(cells.filter(x => dupVals.has(x.s)).map(x => `${x.r}-${x.c}`));
+    return { dupVals, dupPos };
+  };
+
   const renderPreview = () => {
     if (!fixPreview) return;
 
@@ -3719,10 +3739,12 @@ const fixModal = byId("fixBoletoModal");
 
     const calledSet = new Set((fixState.stack||[]).map(x => String(x)));
     const lastStr = fixState.last != null ? String(fixState.last) : "";
+    const dupInfo = findFixDuplicates(g);
+    const dupPos = dupInfo.dupPos;
 
     // Limpia clases de inputs y aplica según modo
     $$("input", fixGrid).forEach(inp => {
-      inp.classList.remove("req","notout","lastwin","free","need","off");
+      inp.classList.remove("req","notout","lastwin","free","need","off","dup");
     });
 
     // Si hay figura seleccionada y shape cargado => modo FIGURA
@@ -3791,6 +3813,11 @@ const fixModal = byId("fixBoletoModal");
             d.classList.add("notout");
             if (inp) inp.classList.add("notout");
           }
+        }
+
+        if (dupPos.has(`${r}-${c}`)){
+          d.classList.add("dup");
+          if (inp) inp.classList.add("dup");
         }
 
         fixPreview.appendChild(d);
@@ -4045,7 +4072,7 @@ const fixModal = byId("fixBoletoModal");
     return matches;
   };
 
-  const refreshFixEstado = async (opts = {}) => {
+  const refreshFixEstado = async () => {
     try{
       let st = await safeFetch(`/juego/admin/boletos/estado${bust()}`);
       if (!st || st.ok === false){
@@ -4061,9 +4088,7 @@ const fixModal = byId("fixBoletoModal");
     }catch(_){ }
     try{ renderFixBoard75(); }catch(_){ }
     try{ renderPreview(); }catch(_){ }
-    if (!opts.skipWinnerPanel){
-      try{ await refreshFixWinnerPanel({keepCurrent:true}); }catch(_){ }
-    }
+    try{ await refreshFixWinnerPanel({keepCurrent:true}); }catch(_){ }
   };
 
   const renderFixBoard75 = () => {
@@ -4188,13 +4213,14 @@ const fixModal = byId("fixBoletoModal");
     if (!key) throw new Error("Ingresa la clave SuperAdmin.");
     if (!serie_archivo) throw new Error("Selecciona la serie.");
     if (!carton_id) throw new Error("Ingresa el # de boleto/cartón.");
+    await refreshFixEstado();
     const j = await postJSON("/juego/admin/boletos/get", {key, serie_archivo, carton_id});
     buildGridInputs(j.grid || j.original_grid || null);
     fixState.fecha = j.fecha || fixState.fecha || "";
     applyFixPanelPayload(j);
     renderFixBoard75();
     renderPreview();
-    setTimeout(() => { try{ refreshFixWinnerPanel({keepCurrent:false}); }catch(_){ } }, 0);
+    await refreshFixWinnerPanel({keepCurrent:false});
     if (j.has_correction) {
       fixInfo.textContent = `${fixInfo.textContent} · ⚠ Este boleto ya tenía una corrección guardada.`;
     }
@@ -4210,18 +4236,23 @@ const fixModal = byId("fixBoletoModal");
     if (!carton_id) throw new Error("Ingresa el # de boleto/cartón.");
 
     const grid = readGridInputs();
+    const dupInfo = findFixDuplicates(grid);
+    if (dupInfo.dupVals.size){
+      renderPreview();
+      alert(`⚠ Hay números repetidos en verde. Corrígelos antes de guardar: ${Array.from(dupInfo.dupVals).join(", ")}`);
+      return;
+    }
+
     const j = await postJSON("/juego/admin/boletos/save", {key, serie_archivo, carton_id, motivo, grid});
-    await refreshFixEstado({skipWinnerPanel:true});
+    await refreshFixEstado();
     renderPreview();
 
-    // refresca ganadores/resultados sin bloquear la UI
-    setTimeout(async () => {
-      try{ if (typeof pollGanadores === "function") await pollGanadores(); }catch(_){ }
-      try{ if (typeof window.refreshResultadosPanel === "function") await window.refreshResultadosPanel(); }catch(_){ }
-      try{ await refreshFixWinnerPanel({keepCurrent:true}); }catch(_){ }
-    }, 0);
+    // refresca ganadores/resultados si existe
+    try{ if (typeof pollGanadores === "function") await pollGanadores(); }catch(_){ }
+    try{ if (typeof window.refreshResultadosPanel === "function") await window.refreshResultadosPanel(); }catch(_){ }
+    try{ await refreshFixWinnerPanel({keepCurrent:true}); }catch(_){ }
 
-    alert(j && j.fast_path ? "✅ Corrección guardada." : "✅ Corrección guardada y motor recalculado.");
+    alert("✅ Corrección guardada y motor recalculado.");
   };
 
   const bindFixBoleto = () => {
@@ -4267,7 +4298,7 @@ const fixModal = byId("fixBoletoModal");
         await new Promise(r => requestAnimationFrame(() => r()));
 
         buildGridInputs(null);
-        await refreshFixEstado({skipWinnerPanel:true});
+        await refreshFixEstado();
         renderPreview();
 
       }catch(e){
@@ -4312,7 +4343,7 @@ const fixModal = byId("fixBoletoModal");
     });
 
     if (fixLoad) fixLoad.addEventListener("click", async () => {
-      try{ await loadBoleto(); }
+      try{ await refreshFixMeta(); await loadBoleto(); }
       catch(e){ alert("❌ " + (e.message || e)); }
     });
 
@@ -4373,6 +4404,7 @@ const fixModal = byId("fixBoletoModal");
     const btn = document.getElementById("fixLoad");
     if (btn){ btn.disabled = true; btn.classList.add("disabled"); }
     try{
+      await refreshFixMeta();
       await loadBoleto();
     }catch(e){
       alert("❌ " + (e && (e.message||e) ? (e.message||e) : "Error"));
