@@ -1356,8 +1356,8 @@
         <button id="revn"   class="btn ghost" type="button">↩ Reversa N…</button>
         <button id="revall" class="btn ghost" type="button">↩ Reversa TODO</button>
         <button id="btnFixBoleto" class="btn ghost" title="Corrección de boleto (SuperAdmin) · Atajo Ctrl+Shift+B" type="button" onclick="window.__openFixBoleto && window.__openFixBoleto()" style="display:none" aria-hidden="true">🛠️</button>
-        <button id="btnProgManualTL" class="btn ghost" title="Programar TL por cantidad de balotas" type="button" onclick="window.__openProgManualTL && window.__openProgManualTL()">🎯 Programar TL</button>
-        <button id="btnConsultarBoleto" class="btn ghost" title="Consultar boleto" type="button" aria-label="Consultar boleto" onclick="window.__openViewBoleto && window.__openViewBoleto()">👁️</button>
+        <button id="btnProgManualTL" class="btn ghost" title="Programar TL por cantidad de balotas · Atajo Ctrl+Alt+L" type="button" onclick="window.__openProgManualTL && window.__openProgManualTL()" style="display:none" aria-hidden="true">🎯</button>
+        <button id="btnConsultarBoleto" class="btn ghost" title="Consultar boleto" type="button" aria-label="Consultar boleto" onclick="window.__openViewBoleto && window.__openViewBoleto()" style="display:none" aria-hidden="true">👁️</button>
       </div>
 
       <div class="extras-wrap">
@@ -5258,5 +5258,24 @@ const applyFiguraView = async (opts = {}) => {
   });
 })();
 </script>
+
+<script>
+(function(){
+  document.addEventListener("keydown", function(ev){
+    try{
+      const target = ev.target;
+      const tag = String((target && target.tagName) || "").toUpperCase();
+      const writing = target && (target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT");
+      if (writing) return;
+
+      if (ev.ctrlKey && ev.altKey && String(ev.key || "").toLowerCase() === "l") {
+        ev.preventDefault();
+        if (window.__openProgManualTL) window.__openProgManualTL();
+      }
+    }catch(e){ console.error(e); }
+  });
+})();
+</script>
+
 </body>
 </html>
