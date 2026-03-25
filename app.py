@@ -9531,6 +9531,10 @@ def _sorteo_build_defaults(fecha):
         "tl_objetivo_llena": "",
         "tl_objetivo_rellena": "",
         "tl_objetivo_yapa": "",
+        "tl_serie_llena": "",
+        "tl_serie_rellena": "",
+        "tl_serie_yapa": "",
+        "tl_serie_super_yapa": "",
     }
 
 def _sorteo_read_config(fecha):
@@ -9571,7 +9575,11 @@ def _sorteo_read_config(fecha):
                 cfg["tl_programadas_activas"] = tl.attrib.get("tl_programadas_activas")
             if tl.attrib.get("tl_programadas_cartones") not in (None, ""):
                 cfg["tl_programadas_cartones"] = tl.attrib.get("tl_programadas_cartones")
-            for k in ("tl_programada_llena", "tl_programada_rellena", "tl_programada_yapa", "tl_objetivo_llena", "tl_objetivo_rellena", "tl_objetivo_yapa"):
+            for k in (
+                "tl_programada_llena", "tl_programada_rellena", "tl_programada_yapa",
+                "tl_objetivo_llena", "tl_objetivo_rellena", "tl_objetivo_yapa",
+                "tl_serie_llena", "tl_serie_rellena", "tl_serie_yapa", "tl_serie_super_yapa",
+            ):
                 if tl.attrib.get(k) not in (None, ""):
                     cfg[k] = tl.attrib.get(k)
 
@@ -9660,7 +9668,11 @@ def _sorteo_save_config(fecha, payload, *, activar=False, finalizar=False):
         if payload.get("tl_programadas_cartones") not in (None, "")
         else tln.attrib.get("tl_programadas_cartones", defaults.get("tl_programadas_cartones", ""))
     ).strip()
-    for _k in ("tl_programada_llena", "tl_programada_rellena", "tl_programada_yapa", "tl_objetivo_llena", "tl_objetivo_rellena", "tl_objetivo_yapa"):
+    for _k in (
+        "tl_programada_llena", "tl_programada_rellena", "tl_programada_yapa",
+        "tl_objetivo_llena", "tl_objetivo_rellena", "tl_objetivo_yapa",
+        "tl_serie_llena", "tl_serie_rellena", "tl_serie_yapa", "tl_serie_super_yapa",
+    ):
         tln.attrib[_k] = str(
             payload.get(_k)
             if payload.get(_k) not in (None, "")
@@ -9787,6 +9799,9 @@ def sorteo():
         tl_objetivo_llena=cfg.get("tl_objetivo_llena") or "",
         tl_objetivo_rellena=cfg.get("tl_objetivo_rellena") or "",
         tl_objetivo_yapa=cfg.get("tl_objetivo_yapa") or "",
+        tl_serie_llena=cfg.get("tl_serie_llena") or "",
+        tl_serie_rellena=cfg.get("tl_serie_rellena") or "",
+        tl_serie_yapa=cfg.get("tl_serie_yapa") or "",
     )
 
 @app.route("/api/vendedor-por-boleto", methods=["GET","POST"])
@@ -9945,6 +9960,9 @@ def sorteo_activar():
         "tl_objetivo_llena": base_cfg.get("tl_objetivo_llena", prev.get("tl_objetivo_llena", "") if isinstance(prev, dict) else ""),
         "tl_objetivo_rellena": base_cfg.get("tl_objetivo_rellena", prev.get("tl_objetivo_rellena", "") if isinstance(prev, dict) else ""),
         "tl_objetivo_yapa": base_cfg.get("tl_objetivo_yapa", prev.get("tl_objetivo_yapa", "") if isinstance(prev, dict) else ""),
+        "tl_serie_llena": base_cfg.get("tl_serie_llena", prev.get("tl_serie_llena", "") if isinstance(prev, dict) else ""),
+        "tl_serie_rellena": base_cfg.get("tl_serie_rellena", prev.get("tl_serie_rellena", "") if isinstance(prev, dict) else ""),
+        "tl_serie_yapa": base_cfg.get("tl_serie_yapa", prev.get("tl_serie_yapa", "") if isinstance(prev, dict) else ""),
         "spinners": spins if isinstance(spins, list) else [],
         "premios_a_pagar_cantidad": base_cfg.get("premios_a_pagar_cantidad", 0),
         "premios_a_pagar_monto": base_cfg.get("premios_a_pagar_monto", 0),
@@ -12682,10 +12700,26 @@ def _tl_prog_semantic_code(code: str) -> str:
 def _tl_prog_build_slots(cfg: dict) -> dict:
     cfg = cfg or {}
     slots = {
-        "TL1": {"carton": _tl_prog_norm_carton(cfg.get("tl_programada_llena")), "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_llena"), 0)},
-        "TL2": {"carton": _tl_prog_norm_carton(cfg.get("tl_programada_rellena")), "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_rellena"), 0)},
-        "TL3": {"carton": _tl_prog_norm_carton(cfg.get("tl_programada_yapa")), "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_yapa"), 0)},
-        "TL4": {"carton": _tl_prog_norm_carton(cfg.get("tl_programadas_super_yapa")), "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_super_yapa"), 0)},
+        "TL1": {
+            "carton": _tl_prog_norm_carton(cfg.get("tl_programada_llena")),
+            "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_llena"), 0),
+            "serie": str(cfg.get("tl_serie_llena") or "").strip(),
+        },
+        "TL2": {
+            "carton": _tl_prog_norm_carton(cfg.get("tl_programada_rellena")),
+            "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_rellena"), 0),
+            "serie": str(cfg.get("tl_serie_rellena") or "").strip(),
+        },
+        "TL3": {
+            "carton": _tl_prog_norm_carton(cfg.get("tl_programada_yapa")),
+            "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_yapa"), 0),
+            "serie": str(cfg.get("tl_serie_yapa") or "").strip(),
+        },
+        "TL4": {
+            "carton": _tl_prog_norm_carton(cfg.get("tl_programadas_super_yapa")),
+            "objetivo": _tl_prog_parse_int(cfg.get("tl_objetivo_super_yapa"), 0),
+            "serie": str(cfg.get("tl_serie_super_yapa") or "").strip(),
+        },
     }
     legacy = _tl_prog_parse_cartones(cfg.get("tl_programadas_cartones"))
     for i, carton in enumerate(legacy[:4], start=1):
@@ -12941,11 +12975,26 @@ def _resolve_tl_programadas_for_day(fecha_iso: str, by_series: dict) -> dict:
             continue
 
         chosen = None
-        for info in series_info:
-            real = info["norm_to_real"].get(req_norm)
-            if real:
-                chosen = {"serie": info["serie"], "carton_id": real}
-                break
+        wanted_serie = str(req.get("serie") or "").strip()
+        if wanted_serie:
+            for info in series_info:
+                try:
+                    same = _serie_equal(info["serie"], wanted_serie)
+                except Exception:
+                    same = (str(info["serie"]).strip() == wanted_serie)
+                if not same:
+                    continue
+                real = info["norm_to_real"].get(req_norm)
+                if real:
+                    chosen = {"serie": info["serie"], "carton_id": real}
+                    break
+
+        if chosen is None:
+            for info in series_info:
+                real = info["norm_to_real"].get(req_norm)
+                if real:
+                    chosen = {"serie": info["serie"], "carton_id": real}
+                    break
 
         if chosen is None:
             req_num = int(req_norm) if req_norm.isdigit() else None
@@ -17005,6 +17054,63 @@ def _hf_admin_check_key(key):
     real = str(os.getenv("GL_SUPERADMIN_KEY") or os.getenv("SUPERADMIN_KEY") or "TLA1299")
     return str(key or "") == real
 
+
+def _hf_programar_tl_key_ok(key):
+    try:
+        ok, _msg = _verify_scope_password('programar_tablas', key)
+        if ok:
+            return True
+    except Exception:
+        pass
+    try:
+        if _hf_admin_check_key(key):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _juego_by_series_from_rangos(fecha_iso: str) -> dict:
+    by_series = {}
+    for rg in (_get_rangos_en_juego(str(fecha_iso)) or []):
+        serie = str((rg or {}).get('serie_archivo') or '').strip()
+        desde = _norm_tabla_id((rg or {}).get('desde') or '')
+        hasta = _norm_tabla_id((rg or {}).get('hasta') or '')
+        if not serie or not desde or not hasta:
+            continue
+        by_series.setdefault(serie, []).append((desde, hasta))
+    return by_series
+
+
+def _sorteo_tl_programadas_payload(cfg: dict | None, fecha_iso: str) -> dict:
+    cfg = dict(cfg or {})
+    slots = _tl_prog_build_slots(cfg)
+    resolved = {}
+    try:
+        resolved = _resolve_tl_programadas_for_day(str(fecha_iso), _juego_by_series_from_rangos(str(fecha_iso))) or {}
+    except Exception:
+        resolved = {}
+
+    def _slot(slot_code: str, carton_key: str, objetivo_key: str, serie_key: str):
+        raw_serie = str(cfg.get(serie_key) or '').strip()
+        raw_carton = _tl_prog_norm_carton(cfg.get(carton_key))
+        raw_obj = _tl_prog_parse_int(cfg.get(objetivo_key), 0)
+        resolved_item = dict(resolved.get(slot_code) or {})
+        serie_final = raw_serie or str(resolved_item.get('serie') or '').strip()
+        return {
+            'serie_archivo': serie_final,
+            'carton_id': raw_carton,
+            'objetivo': raw_obj,
+            'carton_resuelto': str(resolved_item.get('carton_id') or '').strip(),
+        }
+
+    return {
+        'activas': '1' if _tl_prog_on(cfg.get('tl_programadas_activas')) else '0',
+        'llena': _slot('TL1', 'tl_programada_llena', 'tl_objetivo_llena', 'tl_serie_llena'),
+        'rellena': _slot('TL2', 'tl_programada_rellena', 'tl_objetivo_rellena', 'tl_serie_rellena'),
+        'yapa': _slot('TL3', 'tl_programada_yapa', 'tl_objetivo_yapa', 'tl_serie_yapa'),
+    }
+
 @app.post("/juego/admin/boletos/meta")
 def _hf_admin_boletos_meta():
     data = request.get_json(silent=True) or request.form or {}
@@ -17016,6 +17122,116 @@ def _hf_admin_boletos_meta():
         fecha = _get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else datetime.now().strftime("%Y-%m-%d")
     series = _juego_series_en_juego(fecha)
     return jsonify(ok=True, fecha=fecha, series=series)
+
+
+@juego_bp.post("/admin/programacion_manual/meta")
+def _hf_programacion_manual_meta():
+    data = request.get_json(silent=True) or request.form or {}
+    key = data.get('key')
+    if not _hf_programar_tl_key_ok(key):
+        return jsonify(ok=False, error='Clave inválida'), 403
+    fecha = str(data.get('fecha') or '').strip() or _get_sorteo_fecha()
+    cfg = _sorteo_read_config(fecha) if callable(globals().get('_sorteo_read_config')) else {}
+    series = _juego_series_en_juego(fecha)
+    return jsonify(
+        ok=True,
+        fecha=fecha,
+        series=series,
+        programacion=_sorteo_tl_programadas_payload(cfg, fecha),
+        sorteo={
+            'nombre_sorteo': str((cfg or {}).get('nombre_sorteo') or f'Sorteo {fecha}').strip(),
+            'estado': str((cfg or {}).get('estado') or '').strip(),
+            'activo': str((cfg or {}).get('activo') or '0').strip(),
+        },
+    )
+
+
+@juego_bp.post("/admin/programacion_manual/save")
+def _hf_programacion_manual_save():
+    data = request.get_json(silent=True) or request.form or {}
+    key = data.get('key')
+    if not _hf_programar_tl_key_ok(key):
+        return jsonify(ok=False, error='Clave inválida'), 403
+    fecha = str(data.get('fecha') or '').strip() or _get_sorteo_fecha()
+    prev = _sorteo_read_config(fecha) if callable(globals().get('_sorteo_read_config')) else {}
+    cfg = dict(prev or {})
+
+    def _clean_carton(v):
+        return _tl_prog_norm_carton(v)
+
+    def _clean_obj(v):
+        n = _tl_prog_parse_int(v, 0)
+        return str(n) if n > 0 else ''
+
+    def _clean_serie(v):
+        return str(v or '').strip()
+
+    activas_raw = data.get('activas')
+    if activas_raw in (None, ''):
+        activas_raw = '1' if any(str(data.get(k) or '').strip() for k in (
+            'llena_carton', 'rellena_carton', 'yapa_carton',
+            'llena_objetivo', 'rellena_objetivo', 'yapa_objetivo',
+        )) else '0'
+
+    cfg['tl_programadas_activas'] = '1' if _tl_prog_on(activas_raw) else '0'
+    cfg['tl_programada_llena'] = _clean_carton(data.get('llena_carton'))
+    cfg['tl_programada_rellena'] = _clean_carton(data.get('rellena_carton'))
+    cfg['tl_programada_yapa'] = _clean_carton(data.get('yapa_carton'))
+    cfg['tl_objetivo_llena'] = _clean_obj(data.get('llena_objetivo'))
+    cfg['tl_objetivo_rellena'] = _clean_obj(data.get('rellena_objetivo'))
+    cfg['tl_objetivo_yapa'] = _clean_obj(data.get('yapa_objetivo'))
+    cfg['tl_serie_llena'] = _clean_serie(data.get('llena_serie')) if cfg['tl_programada_llena'] else ''
+    cfg['tl_serie_rellena'] = _clean_serie(data.get('rellena_serie')) if cfg['tl_programada_rellena'] else ''
+    cfg['tl_serie_yapa'] = _clean_serie(data.get('yapa_serie')) if cfg['tl_programada_yapa'] else ''
+    cfg['tl_programadas_cartones'] = ','.join([x for x in [
+        cfg.get('tl_programada_llena') or '',
+        cfg.get('tl_programada_rellena') or '',
+        cfg.get('tl_programada_yapa') or '',
+    ] if x])
+
+    saved = _sorteo_save_config(fecha, cfg, activar=False, finalizar=False)
+    return jsonify(
+        ok=True,
+        fecha=fecha,
+        series=_juego_series_en_juego(fecha),
+        programacion=_sorteo_tl_programadas_payload(saved, fecha),
+        sorteo={
+            'nombre_sorteo': str((saved or {}).get('nombre_sorteo') or f'Sorteo {fecha}').strip(),
+            'estado': str((saved or {}).get('estado') or '').strip(),
+            'activo': str((saved or {}).get('activo') or '0').strip(),
+        },
+    )
+
+
+@juego_bp.post("/admin/programacion_manual/clear")
+def _hf_programacion_manual_clear():
+    data = request.get_json(silent=True) or request.form or {}
+    key = data.get('key')
+    if not _hf_programar_tl_key_ok(key):
+        return jsonify(ok=False, error='Clave inválida'), 403
+    fecha = str(data.get('fecha') or '').strip() or _get_sorteo_fecha()
+    prev = _sorteo_read_config(fecha) if callable(globals().get('_sorteo_read_config')) else {}
+    cfg = dict(prev or {})
+    for k in (
+        'tl_programadas_cartones',
+        'tl_programada_llena', 'tl_programada_rellena', 'tl_programada_yapa',
+        'tl_objetivo_llena', 'tl_objetivo_rellena', 'tl_objetivo_yapa',
+        'tl_serie_llena', 'tl_serie_rellena', 'tl_serie_yapa',
+    ):
+        cfg[k] = ''
+    cfg['tl_programadas_activas'] = '0'
+    saved = _sorteo_save_config(fecha, cfg, activar=False, finalizar=False)
+    return jsonify(
+        ok=True,
+        fecha=fecha,
+        series=_juego_series_en_juego(fecha),
+        programacion=_sorteo_tl_programadas_payload(saved, fecha),
+        sorteo={
+            'nombre_sorteo': str((saved or {}).get('nombre_sorteo') or f'Sorteo {fecha}').strip(),
+            'estado': str((saved or {}).get('estado') or '').strip(),
+            'activo': str((saved or {}).get('activo') or '0').strip(),
+        },
+    )
 
 
 def _ticket_original_grid_fast(serie_archivo, carton_id):
