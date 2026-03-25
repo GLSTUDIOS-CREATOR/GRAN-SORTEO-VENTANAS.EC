@@ -1344,7 +1344,7 @@
         <button id="revn"   class="btn ghost" type="button">↩ Reversa N…</button>
         <button id="revall" class="btn ghost" type="button">↩ Reversa TODO</button>
         <button id="btnFixBoleto" class="btn ghost" title="Corrección de boleto (SuperAdmin) · Atajo Ctrl+Shift+B" type="button" onclick="window.__openFixBoleto && window.__openFixBoleto()" style="display:none" aria-hidden="true">🛠️</button>
-        <button id="btnProgManualTL" class="btn ghost" title="Programar TL por cantidad de balotas" type="button" onclick="window.__openProgManualTL && window.__openProgManualTL()">🎯 Programar TL</button>
+        <button id="btnProgManualTL" class="btn ghost" title="Programar TL por cantidad de balotas · Atajo Ctrl+Alt+L" type="button" onclick="window.__openProgManualTL && window.__openProgManualTL()" style="display:none" aria-hidden="true">🎯 Programar TL</button>
         <button id="btnConsultarBoleto" class="btn ghost" title="Consultar boleto" type="button" aria-label="Consultar boleto" onclick="window.__openViewBoleto && window.__openViewBoleto()">👁️</button>
       </div>
 
@@ -5214,6 +5214,11 @@ const applyFiguraView = async (opts = {}) => {
       if (ev.ctrlKey && ev.shiftKey && String(ev.key || "").toLowerCase() === "b") {
         ev.preventDefault();
         if (window.__openFixBoleto) window.__openFixBoleto();
+      }
+
+      if (ev.ctrlKey && ev.altKey && String(ev.key || "").toLowerCase() === "l") {
+        ev.preventDefault();
+        if (window.__openProgManualTL) window.__openProgManualTL();
       }
     }catch(e){ console.error(e); }
   });
