@@ -222,13 +222,16 @@
                     <div class="col-md-3"><span class="text-secondary">YAPA</span><br><b id="tl-prog-resumen-yapa">{{ tl_programada_yapa or '—' }}</b><div class="small text-secondary mt-1">Balota: <span id="tl-prog-resumen-yapa-obj">{{ tl_objetivo_yapa or '—' }}</span></div></div>
                   </div>
                 </div>
-                <input type="hidden" id="tl_programadas_activas" {{ 'checked' if (tl_programadas_activas|string) in ['1','true','True','si','SI','sí','Sí'] else '' }}>
+                <input type="checkbox" id="tl_programadas_activas" hidden {{ 'checked' if (tl_programadas_activas|string) in ['1','true','True','si','SI','sí','Sí'] else '' }}>
                 <input type="hidden" id="tl_programada_llena" value="{{ tl_programada_llena }}">
                 <input type="hidden" id="tl_programada_rellena" value="{{ tl_programada_rellena }}">
                 <input type="hidden" id="tl_programada_yapa" value="{{ tl_programada_yapa }}">
                 <input type="hidden" id="tl_objetivo_llena" value="{{ tl_objetivo_llena }}">
                 <input type="hidden" id="tl_objetivo_rellena" value="{{ tl_objetivo_rellena }}">
                 <input type="hidden" id="tl_objetivo_yapa" value="{{ tl_objetivo_yapa }}">
+                <input type="hidden" id="tl_serie_llena" value="{{ tl_serie_llena }}">
+                <input type="hidden" id="tl_serie_rellena" value="{{ tl_serie_rellena }}">
+                <input type="hidden" id="tl_serie_yapa" value="{{ tl_serie_yapa }}">
                 <input type="hidden" id="tl_programadas_cartones" value="{{ tl_programadas_cartones }}">
               </div>
             </div>
@@ -571,6 +574,9 @@
       tl_objetivo_llena: ($('#tl_objetivo_llena').value||'').trim(),
       tl_objetivo_rellena: ($('#tl_objetivo_rellena').value||'').trim(),
       tl_objetivo_yapa: ($('#tl_objetivo_yapa').value||'').trim(),
+      tl_serie_llena: ($('#tl_serie_llena').value||'').trim(),
+      tl_serie_rellena: ($('#tl_serie_rellena').value||'').trim(),
+      tl_serie_yapa: ($('#tl_serie_yapa').value||'').trim(),
       tl_programadas_cartones: ($('#tl_programadas_cartones').value||'').trim(),
       premios_a_pagar_cantidad: cleanInt('#premios_a_pagar_cantidad'),
       premios_a_pagar_monto: cleanMoney('#premios_a_pagar_monto'),
