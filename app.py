@@ -12606,9 +12606,13 @@ def _required_positions_for_fig(code: str, catalogo: dict):
     pos_order = globals().get("POS_25_ROW") or []
     color_off = (globals().get("COLOR_OFF") or "#E8E8E8").upper()
 
-    # tabla llena / rellena si no está en catálogo
-    # ("RELL" y "LLEN" cubren figuras llamadas "Rellena" o "Llena")
-    if code in ("TL1","TL2","TL3","TL4","RELL","LLEN","COMP") and code not in catalogo:
+    # HOTFIX TL PROGRAMADAS:
+    # Para LLENA / RELLENA / YAPA / SUPER YAPA programadas, SIEMPRE se debe
+    # forzar y pintar toda la tabla con números ya salidos, aunque exista una
+    # figura homónima en catálogo. Si dejamos que el catálogo mande aquí,
+    # pueden quedar solo algunas casillas como "requeridas" y se cuelan números
+    # que no han salido todavía, que es justo el problema reportado.
+    if code in ("TL1", "TL2", "TL3", "TL4", "LLEN", "RELL", "YAPA", "COMP"):
         color_on = (globals().get("COLOR_ON") or "#FF0000").upper()
         return list(pos_order), {p: (color_on if p else "#FFFFFF") for p in pos_order}
 
