@@ -9360,6 +9360,7 @@ def _write_sorteo_activo_snapshot(info: dict | None):
         "estado": str(info.get("estado") or "").strip(),
         "activo": str(info.get("activo") or "0").strip(),
         "finalizado": str(info.get("finalizado") or "0").strip(),
+        "origen_finalizado": str(info.get("origen_finalizado") or info.get("historico") or "0").strip(),
         "actualizado_en": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     # compatibilidad: si viene activo=1 pero estado vacío, marcar activo
@@ -9960,7 +9961,13 @@ def sorteo_activar():
             "estado": "activo",
             "activo": "1",
             "finalizado": "0",
+            "origen_finalizado": str((prev or {}).get("finalizado") or "0"),
         })
+    except Exception:
+        pass
+
+    try:
+        _restore_game_state_for_fecha(str(fecha), save_if_missing=True)
     except Exception:
         pass
 
@@ -10007,7 +10014,12 @@ def api_finalizar_sorteo():
             "estado": "finalizado",
             "activo": "0",
             "finalizado": "1",
+            "origen_finalizado": "1",
         })
+    except Exception:
+        pass
+    try:
+        _save_game_state_snapshot(str(fecha))
     except Exception:
         pass
     return jsonify(ok=True, mensaje="Sorteo finalizado, procesado y XMLs sincronizados.", sorteo=saved)
@@ -11866,6 +11878,8 @@ FIGURAS_DEL_DIA_XML = os.path.join(DB_DIR, "figuras_del_dia.xml")
 DATOS_FIGURAS_XML   = os.path.join(DB_DIR, "datos_figuras.xml")
 os.makedirs(FIGURAS_DIR, exist_ok=True)
 FIG_ESTADOS_JSON = os.path.join(DB_DIR, "figuras_estado.json")
+GAME_STATES_DIR = os.path.join(DB_DIR, "juegos_estado")
+os.makedirs(GAME_STATES_DIR, exist_ok=True)
 
 # vMix API (HTTP) — opcional
 VMIX_HOST = os.getenv("VMIX_HOST", "127.0.0.1")
@@ -11914,6 +11928,146 @@ def _safe_json_write(path, data):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+def _game_state_path(fecha_iso: str) -> str:
+    fecha = _norm_fecha_key(fecha_iso) or date.today().isoformat()
+    fecha = re.sub(r"[^0-9\-]", "_", str(fecha))[:32] or date.today().isoformat()
+    return os.path.join(GAME_STATES_DIR, f"{fecha}.json")
+
+
+def _sanitize_stack_values(values):
+    out = []
+    seen = set()
+    for x in (values or []):
+        try:
+            n = int(str(x).strip())
+        except Exception:
+            continue
+        if not (1 <= n <= 75):
+            continue
+        if n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
+
+
+def _read_game_state_snapshot(fecha_iso: str):
+    try:
+        data = _safe_json_read(_game_state_path(fecha_iso)) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_game_state_snapshot(fecha_iso: str | None = None, *, stinger=None):
+    try:
+        fecha = _norm_fecha_key(fecha_iso or (_get_sorteo_fecha() if callable(globals().get("_get_sorteo_fecha")) else date.today().isoformat())) or date.today().isoformat()
+    except Exception:
+        fecha = date.today().isoformat()
+
+    stack = _sanitize_stack_values(_read_stack() if callable(globals().get("_read_stack")) else [])
+    last = stack[-1] if stack else 0
+    stinger_txt = str(stinger).strip() if stinger not in (None, "") else (str(last) if last else "")
+
+    cfg = {}
+    try:
+        if callable(globals().get("_sorteo_read_config")):
+            cfg = _sorteo_read_config(fecha) or {}
+    except Exception:
+        cfg = {}
+
+    payload = {
+        "fecha": fecha,
+        "stack": stack,
+        "last": last,
+        "ultimos5": list(reversed(stack[-5:])),
+        "total": len(stack),
+        "stinger": stinger_txt,
+        "activo": str((cfg or {}).get("activo") or ""),
+        "finalizado": str((cfg or {}).get("finalizado") or ""),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    _safe_json_write(_game_state_path(fecha), payload)
+    return payload
+
+
+def _restore_game_state_for_fecha(fecha_iso: str, *, save_if_missing: bool = False):
+    fecha = _norm_fecha_key(fecha_iso) or date.today().isoformat()
+    snap = _read_game_state_snapshot(fecha)
+    stack = _sanitize_stack_values(snap.get("stack") or [])
+    last = stack[-1] if stack else 0
+    stinger_txt = str(snap.get("stinger") or (str(last) if last else "")).strip()
+
+    _write_stack(stack)
+    _sync_bingo_xml_from_stack(stack)
+
+    try:
+        tree = ET.parse(BINGO_XML)
+        root = tree.getroot()
+        st = root.find("stinger") or ET.SubElement(root, "stinger")
+        st.text = stinger_txt
+        tree.write(BINGO_XML, encoding="utf-8", xml_declaration=True)
+    except Exception:
+        pass
+
+    ganadores_fecha = []
+    try:
+        data_g = _safe_json_read(GANADORES_JSON) or {}
+        raw_g = data_g.get(str(fecha), [])
+        if isinstance(raw_g, list):
+            ganadores_fecha = raw_g
+    except Exception:
+        ganadores_fecha = []
+
+    try:
+        if ganadores_fecha:
+            keys = []
+            for g in ganadores_fecha:
+                try:
+                    keys.append(_ganador_key(str(fecha), g))
+                except Exception:
+                    continue
+            keys = sorted(list(dict.fromkeys(keys)))
+            _safe_json_write(GANADORES_STATE_JSON, {"keys": keys})
+            _write_ganadores_xml(str(fecha), int(last or 0), ganadores_fecha)
+        elif stack:
+            ganadores_total, _ = _recalcular_ganadores(str(fecha), stack, int(last or 0))
+            ganadores_fecha = ganadores_total or []
+            if ganadores_fecha:
+                _sync_resultados_from_juego(str(fecha), ganadores_fecha)
+            else:
+                _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
+                _write_ganadores_xml(str(fecha), int(last or 0), [])
+        else:
+            _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
+            _write_ganadores_xml(str(fecha), int(last or 0), [])
+    except Exception:
+        try:
+            _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
+            _write_ganadores_xml(str(fecha), int(last or 0), [])
+        except Exception:
+            pass
+
+    try:
+        _refresh_vmix_figuras_panel_for_fecha(str(fecha))
+    except Exception:
+        pass
+
+    if save_if_missing and not snap:
+        try:
+            _save_game_state_snapshot(str(fecha), stinger=stinger_txt)
+        except Exception:
+            pass
+
+    return {
+        "fecha": fecha,
+        "stack": stack,
+        "last": last,
+        "restored": bool(snap),
+        "snapshot_path": _game_state_path(fecha),
+    }
+
 
 def _write_game_xml_dual(tree: ET.ElementTree, filename: str):
     """Espeja XML en static/db y DATA/static/db para que vMix y Render lo lean igual."""
@@ -13760,6 +13914,7 @@ def _get_sorteo_activo_info() -> dict:
                     "estado": "activo",
                     "activo": "1",
                     "finalizado": "0",
+                    "origen_finalizado": str(snap.get("origen_finalizado") or "0").strip(),
                     "fuente": pjson,
                 }
     except Exception:
@@ -14962,6 +15117,10 @@ def juego_marcar():
     except Exception:
         pass
 
+    try:
+        _save_game_state_snapshot(str(fecha), stinger=n)
+    except Exception:
+        pass
 
     return jsonify(
         success=True,
@@ -15007,6 +15166,11 @@ def juego_reversa():
     except Exception:
         gcount = 0
 
+    try:
+        _save_game_state_snapshot(str(fecha), stinger=last)
+    except Exception:
+        pass
+
     return jsonify(
         success=True,
         stack=stack,
@@ -15019,6 +15183,29 @@ def juego_reversa():
 
 @juego_bp.post("/reset")
 def juego_reset():
+    fecha = _get_sorteo_fecha()
+    try:
+        info_activa = _get_sorteo_activo_info() or {}
+    except Exception:
+        info_activa = {}
+    try:
+        cfg_fecha = _sorteo_read_config(str(fecha)) if callable(globals().get("_sorteo_read_config")) else {}
+    except Exception:
+        cfg_fecha = {}
+
+    preserve_flags = [
+        str((info_activa or {}).get("finalizado") or "").strip().lower(),
+        str((info_activa or {}).get("origen_finalizado") or "").strip().lower(),
+        str((cfg_fecha or {}).get("finalizado") or "").strip().lower(),
+    ]
+    preserve_history = any(v in ("1", "true", "si", "sí", "yes") for v in preserve_flags)
+
+    if preserve_history:
+        try:
+            _save_game_state_snapshot(str(fecha))
+        except Exception:
+            pass
+
     _write_stack([])
     _sync_bingo_xml_from_stack([])
     try:
@@ -15032,12 +15219,12 @@ def juego_reset():
     _overlay_off()
     _write_spinner_state(running=False, locked=False, overlay_on=False)
 
-    # limpia estados visuales de figuras (overlay)
+    # limpia estados visuales de figuras (overlay) solo si es un reinicio real del sorteo en curso
     try:
-        fecha = _get_sorteo_fecha()
-        cache = _json_read(FIG_ESTADOS_JSON) or {}
-        cache[str(fecha)] = {}
-        _json_write(FIG_ESTADOS_JSON, cache)
+        if not preserve_history:
+            cache = _json_read(FIG_ESTADOS_JSON) or {}
+            cache[str(fecha)] = {}
+            _json_write(FIG_ESTADOS_JSON, cache)
         try:
             _refresh_vmix_figuras_panel_for_fecha(str(fecha))
         except Exception:
@@ -15045,20 +15232,26 @@ def juego_reset():
     except Exception:
         pass
 
-    # limpia ganadores
+    # limpia ganadores solo si NO es historial ya finalizado/reabierto
     try:
-        fecha = _get_sorteo_fecha()
-        # borra lista del día en ganadores.json
-        data = _safe_json_read(GANADORES_JSON) or {}
-        data[str(fecha)] = []
-        _safe_json_write(GANADORES_JSON, data)
-        _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
-        _write_ganadores_xml(str(fecha), 0, [])
-        _sync_resultados_from_juego(str(fecha), [])
+        if not preserve_history:
+            data = _safe_json_read(GANADORES_JSON) or {}
+            data[str(fecha)] = []
+            _safe_json_write(GANADORES_JSON, data)
+            _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
+            _write_ganadores_xml(str(fecha), 0, [])
+            _sync_resultados_from_juego(str(fecha), [])
+            try:
+                _save_game_state_snapshot(str(fecha), stinger="")
+            except Exception:
+                pass
+        else:
+            _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
+            _write_ganadores_xml(str(fecha), 0, [])
     except Exception:
         pass
 
-    return jsonify(success=True)
+    return jsonify(success=True, preserve_history=preserve_history, fecha=str(fecha))
 
 
 @juego_bp.post("/activar_stinger")
