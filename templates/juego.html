@@ -4990,18 +4990,18 @@ const applyFiguraView = async (opts = {}) => {
 
 </script>
 
-  <!-- MODAL: PROGRAMAR TL POR CANTIDAD DE BALOTAS -->
+  <!-- MODAL: PROGRAMACIÓN TL DEL SORTEO ACTIVO -->
   <div id="progTlModal" class="modal hidden" aria-hidden="true">
     <div class="modal-backdrop" data-close-progtl></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mdlTitleProgTl">
       <div class="modal-head">
-        <h3 id="mdlTitleProgTl">🎯 <span class="spn-red">PROGRAMAR</span> TL POR CANTIDAD</h3>
+        <h3 id="mdlTitleProgTl">🎯 <span class="spn-red">PROGRAMACIÓN</span> TL DEL SORTEO ACTIVO</h3>
         <button class="iconbtn" title="Cerrar" data-close-progtl type="button">&times;</button>
       </div>
 
       <div class="modal-body">
         <div class="winner-editor" style="margin-top:0">
-          <div class="we-title">🔐 Clave SuperAdmin</div>
+          <div class="we-title">🔐 Acceso protegido</div>
           <div class="we-grid">
             <div class="we-field small">
               <label>Clave</label>
@@ -5020,42 +5020,64 @@ const applyFiguraView = async (opts = {}) => {
         </div>
 
         <div class="winner-editor" style="margin-top:10px">
-          <div class="we-title">⚙️ Programación manual</div>
+          <div class="we-title">⚙️ Mismo control que Sorteo</div>
           <div class="we-grid">
             <div class="we-field small">
-              <label>Serie (archivo)</label>
-              <select id="progTlSerie"></select>
-            </div>
-            <div class="we-field small">
-              <label>Boleto / Cartón #</label>
-              <input id="progTlCarton" type="text" placeholder="Ej: 477">
-            </div>
-            <div class="we-field small">
-              <label>Figura TL</label>
-              <select id="progTlFigura">
-                <option value="TL1">TL1 · LLENA</option>
-                <option value="TL2">TL2 · RELLENA</option>
-                <option value="TL3">TL3 · YAPA</option>
-                <option value="TL4">TL4 · SUPER YAPA</option>
-              </select>
-            </div>
-            <div class="we-field small">
-              <label>Activar cuando hayan salido</label>
-              <input id="progTlTrigger" type="number" min="1" max="75" step="1" placeholder="Ej: 48">
-            </div>
-            <div class="we-field small">
-              <label>Disparar después del cierre</label>
-              <input id="progTlGap" type="number" min="0" max="75" step="1" placeholder="Ej: 2">
+              <label>Programación activa</label>
+              <div style="display:flex;align-items:center;gap:10px;height:44px;padding:0 12px;border:1px solid rgba(255,255,255,.14);border-radius:12px;background:rgba(255,255,255,.03)">
+                <input id="progTlActivas" type="checkbox">
+                <span>Usar LLENA, RELLENA y YAPA programadas</span>
+              </div>
             </div>
             <div class="we-field">
-              <label>Nota</label>
-              <input id="progTlNota" type="text" placeholder="Opcional">
+              <label>Sorteo</label>
+              <input id="progTlSorteo" type="text" readonly placeholder="Sorteo activo del día">
             </div>
           </div>
+
+          <div class="we-grid" style="margin-top:12px">
+            <div class="we-field small">
+              <label>Serie LLENA</label>
+              <select id="progTlSerieLlena"></select>
+            </div>
+            <div class="we-field small">
+              <label>Cartón LLENA</label>
+              <input id="progTlCartonLlena" type="text" placeholder="Ej: 45">
+            </div>
+            <div class="we-field small">
+              <label>Balota LLENA</label>
+              <input id="progTlObjetivoLlena" type="number" min="1" max="75" step="1" placeholder="48">
+            </div>
+
+            <div class="we-field small">
+              <label>Serie RELLENA</label>
+              <select id="progTlSerieRellena"></select>
+            </div>
+            <div class="we-field small">
+              <label>Cartón RELLENA</label>
+              <input id="progTlCartonRellena" type="text" placeholder="Ej: 52">
+            </div>
+            <div class="we-field small">
+              <label>Balota RELLENA</label>
+              <input id="progTlObjetivoRellena" type="number" min="1" max="75" step="1" placeholder="52">
+            </div>
+
+            <div class="we-field small">
+              <label>Serie YAPA</label>
+              <select id="progTlSerieYapa"></select>
+            </div>
+            <div class="we-field small">
+              <label>Cartón YAPA</label>
+              <input id="progTlCartonYapa" type="text" placeholder="Ej: 60">
+            </div>
+            <div class="we-field small">
+              <label>Balota YAPA</label>
+              <input id="progTlObjetivoYapa" type="number" min="1" max="75" step="1" placeholder="56">
+            </div>
+          </div>
+
           <div class="hint" style="margin-top:10px">
-            Se programa por <b>cantidad de balotas marcadas</b>, no por número específico.
-            Si al llegar al umbral aún faltan figuras del día, el sistema espera a que cierren todas
-            y recién desde ahí cuenta el segundo valor.
+            Lo que guardes aquí queda en el <b>sorteo activo</b>. El juego y Sorteo leen la misma programación.
           </div>
           <div class="we-actions" style="margin-top:12px">
             <button id="progTlSave" class="btn gold" type="button">💾 Guardar programación</button>
@@ -5075,15 +5097,17 @@ const applyFiguraView = async (opts = {}) => {
   const keyEl = $("progTlKey");
   const estadoEl = $("progTlEstado");
   const infoEl = $("progTlInfo");
-  const serieEl = $("progTlSerie");
-  const cartonEl = $("progTlCarton");
-  const figuraEl = $("progTlFigura");
-  const triggerEl = $("progTlTrigger");
-  const gapEl = $("progTlGap");
-  const notaEl = $("progTlNota");
+  const sorteoEl = $("progTlSorteo");
+  const activasEl = $("progTlActivas");
   const btnMeta = $("progTlMeta");
   const btnSave = $("progTlSave");
   const btnClear = $("progTlClear");
+
+  const fields = {
+    llena: { serie: $("progTlSerieLlena"), carton: $("progTlCartonLlena"), objetivo: $("progTlObjetivoLlena") },
+    rellena: { serie: $("progTlSerieRellena"), carton: $("progTlCartonRellena"), objetivo: $("progTlObjetivoRellena") },
+    yapa: { serie: $("progTlSerieYapa"), carton: $("progTlCartonYapa"), objetivo: $("progTlObjetivoYapa") },
+  };
 
   const norm = (v) => (v == null ? "" : String(v).trim());
 
@@ -5095,7 +5119,7 @@ const applyFiguraView = async (opts = {}) => {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false){
-      throw new Error(j.error || r.statusText || "Error");
+      throw new Error(j.error || j.mensaje || r.statusText || "Error");
     }
     return j;
   };
@@ -5106,12 +5130,84 @@ const applyFiguraView = async (opts = {}) => {
     infoEl.style.color = bad ? "#ff8c8c" : "";
   };
 
+  const setDisabled = (on) => {
+    Object.values(fields).forEach((grp) => {
+      [grp.serie, grp.carton, grp.objetivo].forEach((el) => {
+        if (!el) return;
+        el.disabled = !on;
+      });
+    });
+  };
+
+  const fillSeriesSelect = (selectEl, series, currentValue) => {
+    if (!selectEl) return;
+    const current = norm(currentValue);
+    const list = Array.isArray(series) ? series.filter(Boolean) : [];
+    selectEl.innerHTML = "";
+
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = list.length ? "(Auto detectar)" : "(Sin series)";
+    selectEl.appendChild(empty);
+
+    list.forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = s;
+      opt.textContent = s;
+      selectEl.appendChild(opt);
+    });
+
+    if (current && list.includes(current)) {
+      selectEl.value = current;
+    } else {
+      selectEl.value = "";
+    }
+  };
+
+  const applyProgramacion = (programacion, series, sorteo) => {
+    const prog = programacion || {};
+    activasEl.checked = String(prog.activas || "0") === "1";
+    const estadoTxt = activasEl.checked ? "ACTIVO" : "INACTIVO";
+    const sorteoNombre = norm((sorteo && sorteo.nombre_sorteo) || "");
+    const sorteoEstado = norm((sorteo && sorteo.estado) || "");
+    if (estadoEl) {
+      estadoEl.value = [estadoTxt, sorteoEstado].filter(Boolean).join(" · ") || "Sin cargar";
+    }
+    if (sorteoEl) {
+      sorteoEl.value = [sorteoNombre, sorteoEstado].filter(Boolean).join(" · ") || "Sorteo activo del día";
+    }
+
+    ["llena", "rellena", "yapa"].forEach((name) => {
+      const grp = fields[name];
+      const item = prog[name] || {};
+      fillSeriesSelect(grp.serie, series, norm(item.serie_archivo));
+      if (grp.carton) grp.carton.value = norm(item.carton_id || item.carton_resuelto);
+      if (grp.objetivo) grp.objetivo.value = Number(item.objetivo || 0) || "";
+    });
+    setDisabled(activasEl.checked);
+  };
+
+  const collectPayload = () => ({
+    key: norm(keyEl && keyEl.value),
+    activas: activasEl && activasEl.checked ? "1" : "0",
+    llena_serie: norm(fields.llena.serie && fields.llena.serie.value),
+    llena_carton: norm(fields.llena.carton && fields.llena.carton.value),
+    llena_objetivo: norm(fields.llena.objetivo && fields.llena.objetivo.value),
+    rellena_serie: norm(fields.rellena.serie && fields.rellena.serie.value),
+    rellena_carton: norm(fields.rellena.carton && fields.rellena.carton.value),
+    rellena_objetivo: norm(fields.rellena.objetivo && fields.rellena.objetivo.value),
+    yapa_serie: norm(fields.yapa.serie && fields.yapa.serie.value),
+    yapa_carton: norm(fields.yapa.carton && fields.yapa.carton.value),
+    yapa_objetivo: norm(fields.yapa.objetivo && fields.yapa.objetivo.value),
+  });
+
   const openModal = () => {
     modal.classList.remove("hidden");
     modal.setAttribute("aria-hidden", "false");
     setInfo("");
     if (estadoEl) estadoEl.value = "Sin cargar";
-    try{ keyEl && keyEl.focus(); }catch(_){}
+    if (sorteoEl) sorteoEl.value = "";
+    try{ keyEl && keyEl.focus(); }catch(_){ }
   };
 
   const closeModal = () => {
@@ -5119,83 +5215,31 @@ const applyFiguraView = async (opts = {}) => {
     modal.setAttribute("aria-hidden", "true");
   };
 
-  const fillSeries = (series, currentValue) => {
-    if (!serieEl) return;
-    serieEl.innerHTML = "";
-    const list = Array.isArray(series) ? series : [];
-    if (!list.length){
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "(No hay series en juego)";
-      serieEl.appendChild(opt);
-      return;
-    }
-    list.forEach((s) => {
-      const opt = document.createElement("option");
-      opt.value = s;
-      opt.textContent = s;
-      serieEl.appendChild(opt);
-    });
-    if (currentValue && list.includes(currentValue)){
-      serieEl.value = currentValue;
-    }
-  };
-
   const loadMeta = async () => {
     const key = norm(keyEl && keyEl.value);
-    if (!key) throw new Error("Ingresa la clave SuperAdmin.");
+    if (!key) throw new Error("Ingresa la clave.");
     const j = await postJSONLocal("/juego/admin/programacion_manual/meta", {key});
-    const item = j.item || {};
-    fillSeries(j.series || [], norm(item.serie_archivo));
-    if (cartonEl) cartonEl.value = norm(item.carton_id);
-    if (figuraEl) figuraEl.value = norm(item.fig_code || "TL1") || "TL1";
-    if (triggerEl) triggerEl.value = Number(item.trigger_count || 48);
-    if (gapEl) gapEl.value = Number(item.gap_after_close || 0);
-    if (notaEl) notaEl.value = norm(item.nota);
-    if (estadoEl){
-      const base = Number(item.base_after_close || 0);
-      const extra = [];
-      if (base > 0) extra.push("base " + base);
-      if (Number(item.last_fired_count || 0) > 0) extra.push("disparó en " + item.last_fired_count);
-      estadoEl.value = [norm(item.status || "programado"), extra.join(" · ")].filter(Boolean).join(" · ");
-    }
+    applyProgramacion(j.programacion || {}, j.series || [], j.sorteo || {});
     setInfo("Programación cargada.");
     return j;
   };
 
   const saveProg = async () => {
-    const key = norm(keyEl && keyEl.value);
-    if (!key) throw new Error("Ingresa la clave SuperAdmin.");
-    const serie_archivo = norm(serieEl && serieEl.value);
-    const carton_id = norm(cartonEl && cartonEl.value);
-    const fig_code = norm(figuraEl && figuraEl.value) || "TL1";
-    const trigger_count = Number(triggerEl && triggerEl.value || 0);
-    const gap_after_close = Number(gapEl && gapEl.value || 0);
-    const nota = norm(notaEl && notaEl.value);
-
-    if (!serie_archivo) throw new Error("Selecciona la serie.");
-    if (!carton_id) throw new Error("Ingresa el boleto/cartón.");
-    if (!trigger_count || trigger_count < 1) throw new Error("Ingresa el umbral inicial.");
-    if (gap_after_close < 0) throw new Error("El valor después del cierre no puede ser negativo.");
-
-    await postJSONLocal("/juego/admin/programacion_manual/save", {
-      key, serie_archivo, carton_id, fig_code, trigger_count, gap_after_close, nota
-    });
-    await loadMeta();
+    const payload = collectPayload();
+    if (!payload.key) throw new Error("Ingresa la clave.");
+    const anyCarton = [payload.llena_carton, payload.rellena_carton, payload.yapa_carton].some(Boolean);
+    if ((payload.activas === "1") && !anyCarton) throw new Error("Ingresa al menos un cartón programado o desactiva la programación.");
+    const j = await postJSONLocal("/juego/admin/programacion_manual/save", payload);
+    applyProgramacion(j.programacion || {}, j.series || [], j.sorteo || {});
     setInfo("Programación guardada correctamente.");
   };
 
   const clearProg = async () => {
     const key = norm(keyEl && keyEl.value);
-    if (!key) throw new Error("Ingresa la clave SuperAdmin.");
-    if (!confirm("¿Limpiar la programación manual de TL del día?")) return;
-    await postJSONLocal("/juego/admin/programacion_manual/clear", {key});
-    if (cartonEl) cartonEl.value = "";
-    if (notaEl) notaEl.value = "";
-    if (triggerEl) triggerEl.value = 48;
-    if (gapEl) gapEl.value = 2;
-    if (figuraEl) figuraEl.value = "TL1";
-    if (estadoEl) estadoEl.value = "Sin programación";
+    if (!key) throw new Error("Ingresa la clave.");
+    if (!confirm("¿Limpiar la programación TL del sorteo activo?")) return;
+    const j = await postJSONLocal("/juego/admin/programacion_manual/clear", {key});
+    applyProgramacion(j.programacion || {}, j.series || [], j.sorteo || {});
     setInfo("Programación eliminada.");
   };
 
@@ -5203,6 +5247,10 @@ const applyFiguraView = async (opts = {}) => {
 
   modal.querySelectorAll("[data-close-progtl]").forEach((el) => {
     el.addEventListener("click", closeModal);
+  });
+
+  activasEl && activasEl.addEventListener("change", () => {
+    setDisabled(!!activasEl.checked);
   });
 
   btnMeta && btnMeta.addEventListener("click", async () => {
@@ -5239,7 +5287,6 @@ const applyFiguraView = async (opts = {}) => {
   });
 })();
 </script>
-
 
 <script>
 (function(){
