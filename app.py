@@ -15809,29 +15809,6 @@ def juego_xml_figuras_estado_2col():
     return _vmix_xml_response(root)
 
 
-# ============================================================
-#  REGISTRO BP + INICIALIZACIÓN
-# ============================================================
-def register_juego(app):
-    app.register_blueprint(juego_bp)
-    _ensure_bingo_xml()
-    _ensure_hist()
-    _ensure_vmix_xml()
-    _write_spinner_state(running=False, locked=False, overlay_on=False)
-    try:
-        _refresh_vmix_figuras_panel_for_fecha()
-    except Exception:
-        pass
-
-try:
-    app  # noqa
-    if "juego" not in [bp.name for bp in app.blueprints.values()]:
-        register_juego(app)
-except Exception:
-    pass
-
-
-
 # ================== FIN JUEGO ==================
 
 # inicio spinners #
@@ -17233,6 +17210,27 @@ def _hf_programacion_manual_clear():
         },
     )
 
+
+# ============================================================
+#  REGISTRO BP + INICIALIZACIÓN
+# ============================================================
+def register_juego(app):
+    app.register_blueprint(juego_bp)
+    _ensure_bingo_xml()
+    _ensure_hist()
+    _ensure_vmix_xml()
+    _write_spinner_state(running=False, locked=False, overlay_on=False)
+    try:
+        _refresh_vmix_figuras_panel_for_fecha()
+    except Exception:
+        pass
+
+try:
+    app  # noqa
+    if "juego" not in [bp.name for bp in app.blueprints.values()]:
+        register_juego(app)
+except Exception:
+    pass
 
 def _ticket_original_grid_fast(serie_archivo, carton_id):
     """Obtiene la grilla ORIGINAL del boleto usando la caché de la serie, sin tocar el motor de juego."""
