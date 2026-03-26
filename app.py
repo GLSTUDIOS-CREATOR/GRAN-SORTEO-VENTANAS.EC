@@ -12602,17 +12602,21 @@ def _build_grid_from_row(row_lower: dict):
     return grid, pos_map
 
 def _required_positions_for_fig(code: str, catalogo: dict):
-    """Devuelve (required_pos_list, color_map_pos)"""
+    """Devuelve (required_pos_list, color_map_pos)."""
     pos_order = globals().get("POS_25_ROW") or []
     color_off = (globals().get("COLOR_OFF") or "#E8E8E8").upper()
 
-    # HOTFIX TL PROGRAMADAS:
-    # Para LLENA / RELLENA / YAPA / SUPER YAPA programadas, SIEMPRE se debe
-    # forzar y pintar toda la tabla con números ya salidos, aunque exista una
-    # figura homónima en catálogo. Si dejamos que el catálogo mande aquí,
-    # pueden quedar solo algunas casillas como "requeridas" y se cuelan números
-    # que no han salido todavía, que es justo el problema reportado.
-    if code in ("TL1", "TL2", "TL3", "TL4", "LLEN", "RELL", "YAPA", "COMP"):
+    # IMPORTANTE:
+    # Las TL programadas (TL1..TL4) y sus equivalentes semánticos
+    # LLEN / RELL / YAPA / COMP SIEMPRE se tratan como tabla completa.
+    # No debemos depender del catálogo porque, si allí existe una figura
+    # parcial con el mismo código/nombre, la programación terminaba usando
+    # solo algunas casillas y el boleto se veía "tal cual venía".
+    #
+    # Con esto, cuando una LLENA / RELLENA / YAPA programada dispare,
+    # la forzada reemplazará TODO lo que aún no haya salido usando solo
+    # números ya marcados y respetando B/I/N/G/O.
+    if code in ("TL1", "TL2", "TL3", "TL4", "RELL", "LLEN", "YAPA", "COMP"):
         color_on = (globals().get("COLOR_ON") or "#FF0000").upper()
         return list(pos_order), {p: (color_on if p else "#FFFFFF") for p in pos_order}
 
@@ -13472,7 +13476,7 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
                 _gc = str((_g or {}).get("fig_code") or code_for((_g or {}).get("figura", ""))).strip().upper()
             except Exception:
                 _gc = ""
-            if _semantic_stage(_gc) in {"LLEN", "RELL", "COMP"}:
+            if _semantic_stage(_gc) in {"LLEN", "RELL", "YAPA", "COMP"}:
                 _tb = _norm_tabla_id((_g or {}).get("tabla", ""))
                 if _tb:
                     full_table_claimed_prev.add(_tb)
@@ -15285,26 +15289,47 @@ def juego_reset():
     except Exception:
         pass
 
-    # limpia ganadores solo si NO es historial ya finalizado/reabierto
+    corrections_cleared = False
+    vmix_carton_reset = False
+
+    # RESET del juego actual: siempre deja en cero ganadores, figuras ganadas,
+    # correcciones y punteros TL/cartón, aunque antes el sorteo haya quedado finalizado.
+    # Si preserve_history=True, primero ya se guardó snapshot para no perder historial,
+    # pero el estado operativo del juego sí vuelve a 0.
     try:
-        if not preserve_history:
-            data = _safe_json_read(GANADORES_JSON) or {}
-            data[str(fecha)] = []
-            _safe_json_write(GANADORES_JSON, data)
-            _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
-            _write_ganadores_xml(str(fecha), 0, [])
-            _sync_resultados_from_juego(str(fecha), [])
-            try:
-                _save_game_state_snapshot(str(fecha), stinger="")
-            except Exception:
-                pass
-        else:
-            _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
-            _write_ganadores_xml(str(fecha), 0, [])
+        data = _safe_json_read(GANADORES_JSON) or {}
+        data[str(fecha)] = []
+        _safe_json_write(GANADORES_JSON, data)
+        _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
+        _write_ganadores_xml(str(fecha), 0, [])
+        _sync_resultados_from_juego(str(fecha), [])
+
+        # Reinicio fuerte del juego actual: también deja en cero las correcciones de boletos
+        # y el puntero del XML de cartón ganador, para que las tablas corregidas y las TL
+        # programadas se comporten como si todavía no se hubiera jugado.
+        try:
+            corrections_cleared = bool(_corr_clear_fecha(str(fecha))) if callable(globals().get('_corr_clear_fecha')) else False
+        except Exception:
+            corrections_cleared = False
+        try:
+            vmix_carton_reset = bool(_reset_vmix_carton_state_for_fecha(str(fecha))) if callable(globals().get('_reset_vmix_carton_state_for_fecha')) else False
+        except Exception:
+            vmix_carton_reset = False
+
+        try:
+            _save_game_state_snapshot(str(fecha), stinger="")
+        except Exception:
+            pass
     except Exception:
         pass
 
-    return jsonify(success=True, preserve_history=preserve_history, fecha=str(fecha))
+    return jsonify(
+        success=True,
+        preserve_history=preserve_history,
+        fecha=str(fecha),
+        corrections_cleared=corrections_cleared,
+        vmix_carton_reset=vmix_carton_reset,
+    )
 
 
 @juego_bp.post("/activar_stinger")
@@ -16658,6 +16683,44 @@ def _corr_set(fecha, serie_archivo, carton_id, payload):
     ss = fs.setdefault(str(serie_archivo), {})
     ss[str(carton_id)] = payload
     _write_correcciones(data)
+
+
+def _corr_clear_fecha(fecha):
+    """Limpia todas las correcciones de boletos de una fecha completa."""
+    try:
+        key = str(fecha or "").strip()
+        if not key:
+            return False
+        data = _read_correcciones()
+        if not isinstance(data, dict):
+            data = {}
+        if key in data:
+            data.pop(key, None)
+            _write_correcciones(data)
+        else:
+            _corr_cache_bump()
+        return True
+    except Exception:
+        return False
+
+
+def _reset_vmix_carton_state_for_fecha(fecha_iso):
+    """Reinicia el índice/puntero del XML de cartón ganador para una fecha."""
+    try:
+        state = _vmix_carton_state_read() or {}
+        if not isinstance(state, dict):
+            state = {}
+        by_fecha = state.get("por_fecha") if isinstance(state.get("por_fecha"), dict) else {}
+        by_fecha.pop(str(fecha_iso), None)
+        state["por_fecha"] = by_fecha
+        if str(state.get("fecha") or "") == str(fecha_iso):
+            state["fecha"] = str(fecha_iso)
+            state["actual"] = 0
+            state["total"] = 0
+        _vmix_carton_state_write(state)
+        return True
+    except Exception:
+        return False
 
 def _corr_norm_grid5(grid):
     if not isinstance(grid, list) or len(grid) != 5:
