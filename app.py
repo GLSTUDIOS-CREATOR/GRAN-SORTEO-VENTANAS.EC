@@ -12764,11 +12764,14 @@ def _tl_prog_col_for_num(n: int) -> int:
 
 def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0, required_pos=None, force_ultimo=False):
     """
-    Ajusta solo lo necesario del cartón programado usando números YA marcados.
-    - Conserva números del cartón que ya están marcados.
-    - Solo reemplaza casillas requeridas que aún no han salido.
-    - Respeta bandas B/I/N/G/O por columna.
-    - No altera el historial de balotas.
+    Ajusta el cartón programado usando ÚNICAMENTE números YA marcados.
+
+    Reglas:
+    - Conserva todo número original del cartón que ya salió.
+    - Reemplaza solo las casillas objetivo que aún no han salido.
+    - Nunca mezcla bandas B/I/N/G/O.
+    - Para una tabla completa, la composición final debe quedar 5-5-4-5-5.
+    - No altera el historial real de balotas.
 
     Devuelve:
       (grid_forzada, numeros_figura, marcados_nums_en_grid, completa)
@@ -12803,14 +12806,36 @@ def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0, requi
         ultimo = 0
     ultimo_col = _tl_prog_col_for_num(ultimo) if ultimo else -1
 
+    pos_order = globals().get("POS_25_ROW") or []
+
+    def _req_pos_to_rc(pos):
+        raw = str(pos or "").strip().upper()
+        if not raw:
+            return None
+        if len(raw) == 2 and raw.isdigit():
+            rr = int(raw[0]); cc = int(raw[1])
+            if 0 <= rr < 5 and 0 <= cc < 5:
+                return (rr, cc)
+            return None
+        if raw in pos_order:
+            idx = pos_order.index(raw)
+            return (idx // 5, idx % 5)
+        if len(raw) >= 2 and raw[0] in "BINGO" and raw[1:].isdigit():
+            c_map = {"B": 0, "I": 1, "N": 2, "G": 3, "O": 4}
+            rr = int(raw[1:]) - 1
+            cc = c_map.get(raw[0], -1)
+            if 0 <= rr < 5 and 0 <= cc < 5:
+                return (rr, cc)
+        return None
+
     target_positions = []
     if required_pos:
         for pos in (required_pos or []):
-            try:
-                rr = int(pos[0]); cc = int(pos[1])
-            except Exception:
+            rc = _req_pos_to_rc(pos)
+            if not rc:
                 continue
-            if 0 <= rr < 5 and 0 <= cc < 5:
+            rr, cc = rc
+            if not _is_free_cell(grid[rr][cc]):
                 target_positions.append((rr, cc))
     else:
         for rr in range(5):
@@ -12818,7 +12843,24 @@ def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0, requi
                 if not _is_free_cell(grid[rr][cc]):
                     target_positions.append((rr, cc))
 
+    if required_pos and not target_positions:
+        marcados_en_grid = []
+        seen_grid = set()
+        for rr in range(5):
+            for cc in range(5):
+                v = str(grid[rr][cc]).strip()
+                if v.isdigit():
+                    n = int(v)
+                    if n in marked_set and n not in seen_grid:
+                        seen_grid.add(n)
+                        marcados_en_grid.append(n)
+        return grid, [], sorted(marcados_en_grid), False
+
     target_set = set(target_positions)
+    target_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+    for _rr, _cc in target_positions:
+        target_counts[_cc] = target_counts.get(_cc, 0) + 1
+
     used = set()
     replace_cells = {0: [], 1: [], 2: [], 3: [], 4: []}
 
@@ -12848,7 +12890,7 @@ def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0, requi
                 target_cell = replace_cells[ultimo_col].pop(0)
             else:
                 for rr, cc in reversed(target_positions):
-                    if cc == ultimo_col and not _is_free_cell(grid[rr][cc]):
+                    if cc == ultimo_col:
                         target_cell = (rr, cc)
                         break
             if target_cell is not None:
@@ -12873,14 +12915,16 @@ def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0, requi
 
     numeros_figura = []
     completa = True
+    col_counts_ok = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
     for rr, cc in target_positions:
         v = str(grid[rr][cc]).strip()
         if _is_free_cell(v):
             continue
         if not (v.isdigit() and int(v) in marked_set):
             completa = False
-        if v.isdigit():
-            numeros_figura.append(int(v))
+            continue
+        col_counts_ok[cc] = col_counts_ok.get(cc, 0) + 1
+        numeros_figura.append(int(v))
 
     marcados_en_grid = []
     seen_grid = set()
@@ -12895,6 +12939,12 @@ def _tl_prog_force_grid_with_marked(original_grid, marked_stack, ultimo=0, requi
 
     if pendientes:
         completa = False
+
+    for c in range(5):
+        if int(col_counts_ok.get(c, 0)) != int(target_counts.get(c, 0)):
+            completa = False
+            break
+
     return grid, numeros_figura, sorted(marcados_en_grid), completa
 
 def _resolve_tl_programadas_for_day(fecha_iso: str, by_series: dict) -> dict:
@@ -13659,8 +13709,8 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
             key = f"{fecha_iso}|{fig_code}|{serie_archivo}|{carton_id_norm}"
             if key in known:
                 continue
-            if (not recalc) and pat.get("fig_key") and pat.get("fig_key") in figuras_cerradas_prev:
-                continue
+            # NO bloquear la TL programada por coincidencia semántica de nombre ("LLENA", "RELLENA", etc.).
+            # Solo se evita repetirla por key única y por estado real ya guardado en known / tl_codes_closed_prev.
 
             closed_fig_keys_now = set(figuras_cerradas_prev)
             if not recalc:
@@ -13690,7 +13740,7 @@ def _detectar_ganadores(fecha_iso: str, stack: list, ultimo_marcado: int, recalc
                 continue
 
             grid_forzada, needed_forzados, marked_forzados, tl_grid_completa = _tl_prog_force_grid_with_marked(
-                grid, stack, ultimo, required_pos=pat["required_pos"], force_ultimo=False
+                grid, stack, ultimo, required_pos=pat["required_pos"], force_ultimo=True
             )
             if not tl_grid_completa:
                 continue
@@ -13867,36 +13917,67 @@ def _sync_bingo_xml_from_stack(stack):
       - ultimo="X" SOLO en <balota numero="1">, X = último marcado; todas las demás "", incluida la balota X
       - ultimos5: más reciente → más antiguo
       - ultimoMarcado: último marcado
+
+    HOTFIX:
+      - si datos_bingo.xml existe pero le faltan nodos, se recrean en caliente
+      - así el reset no se cae por AttributeError sobre .text
     """
     _ensure_bingo_xml()
-    tree = ET.parse(BINGO_XML); root = tree.getroot()
-    balotas_el = root.find("balotas")
+    tree = ET.parse(BINGO_XML)
+    root = tree.getroot()
 
-    marked = set(int(x) for x in stack)
+    balotas_el = root.find("balotas")
+    if balotas_el is None:
+        balotas_el = ET.SubElement(root, "balotas")
+
+    existentes = {str(b.get("numero") or "").strip() for b in balotas_el.findall("balota")}
+    for n in range(1, 76):
+        if str(n) not in existentes:
+            ET.SubElement(balotas_el, "balota", numero=str(n), estado="", ultimo="")
+
+    ult5_el = root.find("ultimos5")
+    if ult5_el is None:
+        ult5_el = ET.SubElement(root, "ultimos5")
+
+    total_el = root.find("totalMarcadas")
+    if total_el is None:
+        total_el = ET.SubElement(root, "totalMarcadas")
+
+    ultimo_el = root.find("ultimoMarcado")
+    if ultimo_el is None:
+        ultimo_el = ET.SubElement(root, "ultimoMarcado")
+
+    stinger_el = root.find("stinger")
+    if stinger_el is None:
+        stinger_el = ET.SubElement(root, "stinger")
+    if stinger_el.text is None:
+        stinger_el.text = ""
+
+    stack = [int(x) for x in (stack or []) if 1 <= int(x) <= 75]
+    marked = set(stack)
     last = stack[-1] if stack else None
 
-    # Limpia 'estado' y 'ultimo'
     for b in balotas_el.findall("balota"):
         b.set("estado", "")
         b.set("ultimo", "")
 
-    # Marca presentes
     for b in balotas_el.findall("balota"):
-        n = int(b.get("numero"))
+        try:
+            n = int(b.get("numero"))
+        except Exception:
+            continue
         if n in marked:
             b.set("estado", str(n))
 
-    # 👉 "ultimo" solo en la balota numero="1"
     first = balotas_el.find(".//balota[@numero='1']")
-    if first is not None:
-        first.set("ultimo", str(last) if last is not None else "")
+    if first is None:
+        first = ET.SubElement(balotas_el, "balota", numero="1", estado="", ultimo="")
+    first.set("ultimo", str(last) if last is not None else "")
 
-    # ultimos5 (más reciente primero)
     ult5 = list(reversed(stack[-5:])) if stack else []
-    root.find("ultimos5").text = ",".join(str(x) for x in ult5)
-
-    root.find("totalMarcadas").text = str(len(marked))
-    root.find("ultimoMarcado").text = (str(last) if last is not None else "")
+    ult5_el.text = ",".join(str(x) for x in ult5)
+    total_el.text = str(len(marked))
+    ultimo_el.text = (str(last) if last is not None else "")
 
     tree.write(BINGO_XML, encoding="utf-8", xml_declaration=True)
     try:
@@ -15257,56 +15338,109 @@ def juego_reset():
     ]
     preserve_history = any(v in ("1", "true", "si", "sí", "yes") for v in preserve_flags)
 
+    # Si el día ya estaba finalizado, guarda snapshot ANTES de limpiar,
+    # pero el reset operativo igual debe dejar el juego en cero.
     if preserve_history:
         try:
             _save_game_state_snapshot(str(fecha))
         except Exception:
             pass
 
+    # 1) limpiar tablero / stack / stinger
     _write_stack([])
-    _sync_bingo_xml_from_stack([])
     try:
-        tree = ET.parse(BINGO_XML); root = tree.getroot()
-        st = root.find("stinger") or ET.SubElement(root, "stinger"); st.text = ""
+        _sync_bingo_xml_from_stack([])
+    except Exception:
+        try:
+            _ensure_bingo_xml()
+            tree = ET.parse(BINGO_XML)
+            root = tree.getroot()
+
+            balotas_el = root.find("balotas")
+            if balotas_el is None:
+                balotas_el = ET.SubElement(root, "balotas")
+            existentes = {str(b.get("numero") or "").strip() for b in balotas_el.findall("balota")}
+            for n in range(1, 76):
+                if str(n) not in existentes:
+                    ET.SubElement(balotas_el, "balota", numero=str(n), estado="", ultimo="")
+            for b in balotas_el.findall("balota"):
+                b.set("estado", "")
+                b.set("ultimo", "")
+
+            ult5_el = root.find("ultimos5") or ET.SubElement(root, "ultimos5")
+            total_el = root.find("totalMarcadas") or ET.SubElement(root, "totalMarcadas")
+            ultimo_el = root.find("ultimoMarcado") or ET.SubElement(root, "ultimoMarcado")
+            st = root.find("stinger") or ET.SubElement(root, "stinger")
+
+            ult5_el.text = ""
+            total_el.text = "0"
+            ultimo_el.text = ""
+            st.text = ""
+
+            tree.write(BINGO_XML, encoding="utf-8", xml_declaration=True)
+        except Exception:
+            pass
+    try:
+        tree = ET.parse(BINGO_XML)
+        root = tree.getroot()
+        st = root.find("stinger") or ET.SubElement(root, "stinger")
+        st.text = ""
         tree.write(BINGO_XML, encoding="utf-8", xml_declaration=True)
     except Exception:
         pass
 
-    # apaga overlay/spinner
-    _overlay_off()
-    _write_spinner_state(running=False, locked=False, overlay_on=False)
-
-    # limpia estados visuales de figuras (overlay) solo si es un reinicio real del sorteo en curso
+    # 2) apagar overlay/spinner
     try:
-        if not preserve_history:
-            cache = _json_read(FIG_ESTADOS_JSON) or {}
-            cache[str(fecha)] = {}
-            _json_write(FIG_ESTADOS_JSON, cache)
-        try:
-            _refresh_vmix_figuras_panel_for_fecha(str(fecha))
-        except Exception:
-            pass
+        _overlay_off()
+    except Exception:
+        pass
+    try:
+        _write_spinner_state(running=False, locked=False, overlay_on=False)
     except Exception:
         pass
 
+    # 3) limpiar SIEMPRE estados visuales del juego actual
+    try:
+        cache = _json_read(FIG_ESTADOS_JSON) or {}
+        cache[str(fecha)] = {}
+        _json_write(FIG_ESTADOS_JSON, cache)
+    except Exception:
+        pass
+
+    # 4) dejar en cero resultados/ganadores del día actual
     corrections_cleared = False
     vmix_carton_reset = False
+    resultados_reset = False
+    figuras_refresh_ok = False
 
-    # RESET del juego actual: siempre deja en cero ganadores, figuras ganadas,
-    # correcciones y punteros TL/cartón, aunque antes el sorteo haya quedado finalizado.
-    # Si preserve_history=True, primero ya se guardó snapshot para no perder historial,
-    # pero el estado operativo del juego sí vuelve a 0.
     try:
+        # ganadores.json + state + xml
         data = _safe_json_read(GANADORES_JSON) or {}
         data[str(fecha)] = []
         _safe_json_write(GANADORES_JSON, data)
         _safe_json_write(GANADORES_STATE_JSON, {"keys": []})
         _write_ganadores_xml(str(fecha), 0, [])
-        _sync_resultados_from_juego(str(fecha), [])
 
-        # Reinicio fuerte del juego actual: también deja en cero las correcciones de boletos
-        # y el puntero del XML de cartón ganador, para que las tablas corregidas y las TL
-        # programadas se comporten como si todavía no se hubiera jugado.
+        # resultados_sorteo.xml: conservar filas base/extras, pero SIN ganadores
+        try:
+            actual = _cargar_resultados(str(fecha)) or {"items": [], "extras": {"comodin": {}, "gran_bonus": {}}}
+            items_reset = []
+            for item in list(actual.get("items") or []):
+                figura = str(item.get("figura") or item.get("nombre") or "").strip()
+                if not figura:
+                    continue
+                items_reset.append({"figura": figura, "ganadores": []})
+            extras_reset = dict(actual.get("extras") or {})
+            _guardar_resultados(str(fecha), items_reset, extras=extras_reset)
+            resultados_reset = True
+        except Exception:
+            try:
+                _sync_resultados_from_juego(str(fecha), [])
+                resultados_reset = True
+            except Exception:
+                resultados_reset = False
+
+        # correcciones + puntero de cartón ganador
         try:
             corrections_cleared = bool(_corr_clear_fecha(str(fecha))) if callable(globals().get('_corr_clear_fecha')) else False
         except Exception:
@@ -15316,6 +15450,14 @@ def juego_reset():
         except Exception:
             vmix_carton_reset = False
 
+        # refrescar panel/xml de figuras ya sin premios jugados
+        try:
+            _refresh_vmix_figuras_panel_for_fecha(str(fecha))
+            figuras_refresh_ok = True
+        except Exception:
+            figuras_refresh_ok = False
+
+        # snapshot final del estado limpio
         try:
             _save_game_state_snapshot(str(fecha), stinger="")
         except Exception:
@@ -15329,6 +15471,13 @@ def juego_reset():
         fecha=str(fecha),
         corrections_cleared=corrections_cleared,
         vmix_carton_reset=vmix_carton_reset,
+        resultados_reset=resultados_reset,
+        figuras_refresh_ok=figuras_refresh_ok,
+        ganadores_total=0,
+        stack=[],
+        ultimos5=[],
+        last=None,
+        force_reload=True,
     )
 
 
